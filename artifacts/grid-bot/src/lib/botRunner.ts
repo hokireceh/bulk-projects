@@ -210,6 +210,19 @@ export class BotRunner {
     return false;
   }
 
+  /**
+   * Returns true if a resting order already exists at this price in the live order book.
+   * Prevents margin drain when price bounces repeatedly across the same level —
+   * each bounce would otherwise reserve fresh margin for a duplicate resting order.
+   * Checks any side: BUY+SELL at the same price would be self-crossing anyway.
+   */
+  private hasOpenOrderAt(price: number): boolean {
+    const tolerance = this.gridSpacing * 0.02; // 2% of spacing — handles float rounding
+    return this.openOrders.some(
+      o => o.symbol === this.config.symbol && Math.abs(o.price - price) < tolerance
+    );
+  }
+
   // ── SL/TP check ─────────────────────────────────────────────────────────────
 
   /**
@@ -490,11 +503,16 @@ export class BotRunner {
       for (let i = 0; i < orderCount; i++) {
         if (!this.running) break;
 
+        // Level index formula:
+        // UP   (BUY) : prevLevel+1 → currentLevel  — all base prices BELOW current ✓
+        // DOWN (SELL): currentLevel+1 → prevLevel   — all base prices ABOVE current ✓
+        // Using currentLevel+i+1 for DOWN ensures SELL orders rest above current price
+        // instead of crossing (the old prevLevel-i-1 formula put them below current).
         const levelIdx = levelsMoved < 0
-          ? prevLevel - i - 1
+          ? currentLevel + i + 1
           : prevLevel + i + 1;
 
-        if (levelIdx < 0 || levelIdx >= this.config.gridCount + 1) continue;
+        if (levelIdx < 0 || levelIdx > this.config.gridCount) continue;
 
         // ── BUG-DUP-001: Duplicate order guard ────────────────────────────────
         if (this.isDuplicateOrder(levelIdx, side)) {
@@ -503,6 +521,14 @@ export class BotRunner {
         }
 
         const orderPrice = this.levelBasePrice(levelIdx);
+
+        // ── LIVE-ORDER-CHECK: Skip if resting order already at this price ─────
+        // Prevents margin drain when price bounces across the same level repeatedly.
+        // Each new resting order reserves fresh margin even if the old one still sits there.
+        if (this.hasOpenOrderAt(orderPrice)) {
+          this.log(`Skip ${side} @ ${orderPrice.toFixed(2)}: resting order already at this level`);
+          continue;
+        }
         const size = sizePerGrid(this.config.investment, this.config.gridCount, orderPrice, this.config.leverage);
 
         // ── SIZE-GUARD ─────────────────────────────────────────────────────────
