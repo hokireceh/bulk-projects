@@ -62,7 +62,17 @@ export default function BotDetail() {
   });
 
   const startBot = useStartBot();
-  const stopBot = useStopBot();
+  const stopBot  = useStopBot();
+
+  // Called whenever runner stops for any reason (manual, SL/TP, unmount)
+  const handleRunnerStopped = useCallback(() => {
+    stopBot.mutate({ id: botId }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getGetBotQueryKey(botId) });
+        queryClient.invalidateQueries({ queryKey: getListBotsQueryKey() });
+      },
+    });
+  }, [botId, stopBot, queryClient]);
 
   const tickerPrice: number = ticker?.markPrice ?? 0;
   // Prefer live price from the running bot's poller; fall back to ticker
@@ -156,11 +166,11 @@ export default function BotDetail() {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // Stop runner on unmount
+  // Stop runner on unmount — runner.stop() will fire onStopped which updates DB
   useEffect(() => {
     return () => {
       if (runnerRef.current?.isRunning) {
-        runnerRef.current.stop();
+        void runnerRef.current.stop();
       }
     };
   }, []);
@@ -199,7 +209,8 @@ export default function BotDetail() {
         investment: bot.investment,
         leverage: bot.leverage ?? 1,
       },
-      syncFromRunner
+      syncFromRunner,
+      handleRunnerStopped,
     );
     runnerRef.current = runner;
     setLogs([...runner.logs]); // sync restored logs immediately
@@ -208,19 +219,20 @@ export default function BotDetail() {
 
   const handleStop = async () => {
     if (!bot) return;
-
     const runner = runnerRef.current;
     if (runner) {
+      // runner.stop() will fire onStopped → handleRunnerStopped → stopBot.mutate
       await runner.stop();
       runnerRef.current = null;
+    } else {
+      // Runner not present (e.g. page was refreshed) — call API directly
+      stopBot.mutate({ id: bot.id }, {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getGetBotQueryKey(botId) });
+          queryClient.invalidateQueries({ queryKey: getListBotsQueryKey() });
+        },
+      });
     }
-
-    stopBot.mutate({ id: bot.id }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getGetBotQueryKey(botId) });
-        queryClient.invalidateQueries({ queryKey: getListBotsQueryKey() });
-      },
-    });
   };
 
   const getStatusColor = (status: string) => {

@@ -92,6 +92,7 @@ export class BotRunner {
   public currentPrice = 0;
   public logs: LogLine[] = [];
   private onUpdate?: () => void;
+  private onStopped?: () => void;
   private storageKey: string;
 
   // Live data from bulk.trade account stream
@@ -100,8 +101,9 @@ export class BotRunner {
   public openOrders: LiveOrder[] = [];
   public totalTrades = 0;
 
-  constructor(private config: BotConfig, onUpdate?: () => void) {
-    this.onUpdate = onUpdate;
+  constructor(private config: BotConfig, onUpdate?: () => void, onStopped?: () => void) {
+    this.onUpdate  = onUpdate;
+    this.onStopped = onStopped;
     this.storageKey = `bot_logs_${config.botId}`;
     this.stateKey   = `bot_state_${config.botId}`;
     try {
@@ -622,6 +624,7 @@ export class BotRunner {
   // ── Stop ─────────────────────────────────────────────────────────────────────
 
   async stop(): Promise<void> {
+    if (!this.running) return;
     this.running = false;
     this.lastLevel = null;
     // Clear persisted level so next start reinitializes from scratch
@@ -647,5 +650,7 @@ export class BotRunner {
     });
     this.log(cancelled ? "All orders cancelled. Bot stopped." : "Cancel error. Bot stopped.");
     this.onUpdate?.();
+    // Notify parent so it can update DB status to STOPPED
+    this.onStopped?.();
   }
 }
