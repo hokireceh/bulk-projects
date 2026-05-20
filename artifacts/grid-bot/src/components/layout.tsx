@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, Settings, Grid, LayoutDashboard, BarChart2 } from "lucide-react";
+import { Activity, Settings, Grid, LayoutDashboard, ScrollText } from "lucide-react";
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
@@ -7,7 +7,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: "/", label: "Dashboard", icon: LayoutDashboard },
     { href: "/bots", label: "My Bots", icon: Grid },
-    { href: "/markets", label: "Markets", icon: BarChart2 },
+    { href: "/logs", label: "Logs", icon: ScrollText },
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 
