@@ -308,6 +308,12 @@ components:
         status:
           type: string
           enum: [IDLE, RUNNING, STOPPED, ERROR]
+        stopLoss:
+          type: ["number", "null"]
+          description: Auto-stop price threshold (below for LONG/NEUTRAL, above for SHORT)
+        takeProfit:
+          type: ["number", "null"]
+          description: Auto-stop price threshold (above for LONG/NEUTRAL, below for SHORT)
         totalPnl:
           type: ["number", "null"]
         totalTrades:
@@ -351,6 +357,14 @@ components:
           default: 1
         accountPubkey:
           type: string
+        stopLoss:
+          type: number
+          nullable: true
+          description: Auto-stop if price drops below (LONG/NEUTRAL) or rises above (SHORT) this value
+        takeProfit:
+          type: number
+          nullable: true
+          description: Auto-stop if price rises above (LONG/NEUTRAL) or drops below (SHORT) this value
 
     BotUpdate:
       type: object
@@ -370,6 +384,12 @@ components:
           type: number
         leverage:
           type: integer
+        stopLoss:
+          type: number
+          nullable: true
+        takeProfit:
+          type: number
+          nullable: true
 
     BotOrder:
       type: object

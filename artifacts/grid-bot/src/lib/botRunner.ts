@@ -1,15 +1,19 @@
 import { sizePerGrid } from "./gridEngine";
 import { buildAndSign, submitTransaction, cancelAllOrders } from "./signing";
 
-// All HTTP requests go through our API proxy to avoid browser CORS restrictions.
 const PROXY_API = "/api";
 const STAGING_WS = "wss://staging-ws.bulk.trade";
 
-// Polling interval for price-based crossing detection (ms)
 const PRICE_POLL_INTERVAL_MS = 5_000;
-
-// Max orders to place per crossing event (when price skips multiple levels)
 const MAX_GRID_ORDERS_PER_CROSSING = 5;
+
+// Cooldown before placing another order at the same level+side (ms)
+// Prevents duplicate orders when price bounces across a boundary rapidly.
+// Mirror: extendedBotEngine BUG-DUP-001
+const DUP_GUARD_MS = 30_000;
+
+// Minimum time between out-of-range log lines (ms) to avoid log spam
+const OUT_OF_RANGE_LOG_INTERVAL_MS = 60_000;
 
 export interface BotConfig {
   botId: number;
@@ -22,6 +26,8 @@ export interface BotConfig {
   gridCount: number;
   investment: number;
   leverage: number;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 
 export type LogLine = { ts: number; msg: string };
@@ -68,9 +74,20 @@ export class BotRunner {
   private ws: WebSocket | null = null;
   private pricePoller: ReturnType<typeof setInterval> | null = null;
 
-  // Level-crossing state (reference: extendedGridStates)
-  private lastLevel: number | null = null;
+  // Level-crossing state
+  // Mirror: extendedBotEngine EXT-02 — persist lastLevel so bot survives page refresh
+  lastLevel: number | null = null;
   private gridCheckInFlight = false;
+
+  // BUG-DUP-001: tracks recently placed level+side pairs to suppress duplicates
+  // key = `${levelIdx}:${side}`, value = timestamp of last placement
+  private recentOrders = new Map<string, number>();
+
+  // Out-of-range log throttle (mirror: extendedBotEngine extOutOfRangeNotifAt)
+  private lastOutOfRangeLogAt = 0;
+
+  // EXT-02: localStorage key for persisting lastLevel across page refreshes
+  private stateKey: string;
 
   public currentPrice = 0;
   public logs: LogLine[] = [];
@@ -86,6 +103,7 @@ export class BotRunner {
   constructor(private config: BotConfig, onUpdate?: () => void) {
     this.onUpdate = onUpdate;
     this.storageKey = `bot_logs_${config.botId}`;
+    this.stateKey   = `bot_state_${config.botId}`;
     try {
       const saved = localStorage.getItem(this.storageKey);
       if (saved) this.logs = JSON.parse(saved) as LogLine[];
@@ -110,7 +128,7 @@ export class BotRunner {
   /**
    * Compute which grid band the price is in.
    * Level 0 = [lower, lower+spacing), level N-1 = [upper-spacing, upper].
-   * Clamped to [0, gridCount-1] so out-of-range prices don't break logic.
+   * Clamped to [0, gridCount-1].
    * Mirror: extendedBotEngine CROSS-CURRENTLEVEL-LOWERBOUND-001
    */
   private computeCurrentLevel(price: number): number {
@@ -121,23 +139,88 @@ export class BotRunner {
     ));
   }
 
-  /**
-   * Exact price of a grid level index (rounded to 2dp to avoid float drift).
-   */
+  /** Exact price of a grid level index (2dp to avoid float drift). */
   private levelBasePrice(levelIndex: number): number {
     return Math.round((this.config.lowerPrice + levelIndex * this.gridSpacing) * 100) / 100;
   }
 
   /**
-   * Side order constraint per mode:
-   * LONG:    BUY=opening (ok), SELL=reduce-only (close long)
-   * SHORT:   SELL=opening (ok), BUY=reduce-only (close short)
-   * NEUTRAL: both directions, never reduce-only
+   * LONG:    BUY=opening, SELL=reduce-only (close long)
+   * SHORT:   SELL=opening, BUY=reduce-only (close short)
+   * NEUTRAL: both sides, never reduce-only
+   * Mirror: extendedBotEngine botLogic.ts computeReduceOnly
    */
   private computeReduceOnly(side: "BUY" | "SELL"): boolean {
     if (this.config.mode === "LONG")  return side === "SELL";
     if (this.config.mode === "SHORT") return side === "BUY";
     return false;
+  }
+
+  // ── EXT-02: lastLevel persistence ──────────────────────────────────────────
+
+  /**
+   * Persist lastLevel to localStorage so the bot survives page refreshes.
+   * Mirror: extendedBotEngine EXT-02 (stores gridLastLevel in DB)
+   */
+  private persistLastLevel(level: number | null) {
+    this.lastLevel = level;
+    if (level !== null) {
+      try {
+        localStorage.setItem(this.stateKey, JSON.stringify({ lastLevel: level }));
+      } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Restore lastLevel from localStorage on bot start.
+   * If restored, the bot resumes from the saved level instead of reinitializing.
+   */
+  private restoreLastLevel(): boolean {
+    try {
+      const saved = localStorage.getItem(this.stateKey);
+      if (!saved) return false;
+      const s = JSON.parse(saved) as { lastLevel?: number };
+      if (typeof s.lastLevel === "number") {
+        this.lastLevel = s.lastLevel;
+        return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  }
+
+  // ── BUG-DUP-001: Duplicate order guard ─────────────────────────────────────
+
+  /**
+   * Returns true if an order at this level+side was placed recently (within DUP_GUARD_MS).
+   * Prevents double-orders when price ticks rapidly back and forth across a boundary.
+   * Mirror: extendedBotEngine BUG-DUP-001 existingPending check
+   */
+  private isDuplicateOrder(levelIdx: number, side: "BUY" | "SELL"): boolean {
+    const key = `${levelIdx}:${side}`;
+    const last = this.recentOrders.get(key);
+    if (last !== undefined && Date.now() - last < DUP_GUARD_MS) return true;
+    this.recentOrders.set(key, Date.now());
+    return false;
+  }
+
+  // ── SL/TP check ─────────────────────────────────────────────────────────────
+
+  /**
+   * Mirror: extendedBotEngine botLogic.ts isSlTriggered / isTpTriggered
+   * LONG/NEUTRAL: SL triggers if price < stopLoss, TP triggers if price > takeProfit
+   * SHORT:        SL triggers if price > stopLoss, TP triggers if price < takeProfit
+   */
+  private checkSlTp(price: number): "sl" | "tp" | null {
+    const { mode, stopLoss, takeProfit } = this.config;
+    if (stopLoss != null) {
+      const triggered = mode === "SHORT" ? price > stopLoss : price < stopLoss;
+      if (triggered) return "sl";
+    }
+    if (takeProfit != null) {
+      const triggered = mode === "SHORT" ? price < takeProfit : price > takeProfit;
+      if (triggered) return "tp";
+    }
+    return null;
   }
 
   // ── Start ───────────────────────────────────────────────────────────────────
@@ -146,11 +229,9 @@ export class BotRunner {
     if (this.running) return;
     this.running = true;
     this.logs = [];
-    this.lastLevel = null;
     this.totalTrades = 0;
     this.log(`Starting bot #${this.config.botId} [${this.config.symbol}] mode=${this.config.mode}`);
 
-    // Validate config
     if (!this.config.gridCount || this.config.lowerPrice >= this.config.upperPrice) {
       this.log("✗ Invalid grid config: gridCount=0 or lower >= upper");
       this.running = false;
@@ -158,14 +239,19 @@ export class BotRunner {
       return;
     }
 
+    if (this.config.stopLoss != null) {
+      this.log(`Stop Loss: $${this.config.stopLoss.toFixed(2)}`);
+    }
+    if (this.config.takeProfit != null) {
+      this.log(`Take Profit: $${this.config.takeProfit.toFixed(2)}`);
+    }
+
     try {
-      // 1. Fetch current mark price
       const price = await this.fetchMarkPrice();
       if (!price) throw new Error("Could not determine current price");
       this.currentPrice = price;
-      this.log(`Mark price: ${price}`);
+      this.log(`Mark price: $${price.toFixed(2)}`);
 
-      // 2. Cancel any existing open orders for this symbol
       this.log("Cancelling existing orders...");
       const cancelled = await cancelAllOrders({
         privateKey: this.config.privateKey,
@@ -175,21 +261,25 @@ export class BotRunner {
       });
       this.log(cancelled ? "Existing orders cancelled." : "Cancel returned error (may be none open).");
 
-      // 3. Initialize grid level state — no upfront order placement.
-      // On the FIRST tick the lastLevel is set; orders only fire on subsequent crossings.
-      this.lastLevel = null;
+      // EXT-02: Restore lastLevel from localStorage if available
+      const restored = this.restoreLastLevel();
+      if (restored) {
+        this.log(
+          `Restored lastLevel=${this.lastLevel} from previous session | ` +
+          `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
+          `spacing ${this.gridSpacing.toFixed(2)}`
+        );
+      } else {
+        this.lastLevel = null;
+        this.log(
+          `Grid initialized: ${this.config.gridCount} levels | ` +
+          `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
+          `spacing ${this.gridSpacing.toFixed(2)}`
+        );
+        this.log("Waiting for first price tick to set baseline level…");
+      }
 
-      this.log(
-        `Grid initialized: ${this.config.gridCount} levels | ` +
-        `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
-        `spacing ${this.gridSpacing.toFixed(2)}`
-      );
-      this.log("Waiting for first price tick to set baseline level…");
-
-      // 4. Connect account WS (margin / position / order tracking)
       this.connectWebSocket();
-
-      // 5. Start price poller → drives crossing detection
       this.startPricePoller();
 
     } catch (err) {
@@ -199,7 +289,7 @@ export class BotRunner {
     }
   }
 
-  // ── Price poller (primary crossing trigger) ─────────────────────────────────
+  // ── Price poller ─────────────────────────────────────────────────────────────
 
   private startPricePoller() {
     this.pricePoller = setInterval(async () => {
@@ -229,72 +319,114 @@ export class BotRunner {
   /**
    * Core grid logic — mirrors extExecuteGridCheck from extendedBotEngine.ts.
    *
-   * Algorithm:
-   *   1. Compute currentLevel = floor((price - lower) / spacing), clamped [0, N-1]
-   *   2. If lastLevel is null → initialize (no order placed on first tick)
-   *   3. If currentLevel === lastLevel → no crossing, skip
-   *   4. levelsMoved = currentLevel - lastLevel
-   *      - negative (price dropped) → BUY
-   *      - positive (price rose)    → SELL
-   *   5. Place up to MAX_GRID_ORDERS_PER_CROSSING orders at exact level prices
-   *   6. Update lastLevel
+   * Improvements over previous version:
+   *   [EXT-SL/TP]    Check Stop Loss / Take Profit before crossing detection
+   *   [EXT-02]       lastLevel persisted to localStorage (survives page refresh)
+   *   [BUG-DUP-001]  Duplicate level+side guard with DUP_GUARD_MS cooldown
+   *   [PRECHECK-001] reduceOnly orders check live position before placing
+   *   [SIZE-GUARD]   Skip order if computed size is zero or negative
+   *   [OOR-THROTTLE] Out-of-range log at most once per OUT_OF_RANGE_LOG_INTERVAL_MS
    */
   private async runGridCheck(price: number): Promise<void> {
     if (!this.running || this.gridCheckInFlight) return;
     this.gridCheckInFlight = true;
 
     try {
-      // Out-of-range guard
+      // ── SL/TP check (mirror: extendedBotEngine SL/TP block) ─────────────────
+      const sltp = this.checkSlTp(price);
+      if (sltp === "sl") {
+        this.log(`🛑 Stop Loss dipicu @ $${price.toFixed(2)} (SL: $${this.config.stopLoss}). Bot berhenti otomatis.`);
+        this.gridCheckInFlight = false;
+        await this.stop();
+        return;
+      }
+      if (sltp === "tp") {
+        this.log(`✅ Take Profit dipicu @ $${price.toFixed(2)} (TP: $${this.config.takeProfit}). Bot berhenti otomatis.`);
+        this.gridCheckInFlight = false;
+        await this.stop();
+        return;
+      }
+
+      // ── Out-of-range guard (OOR-THROTTLE) ────────────────────────────────────
       if (price < this.config.lowerPrice || price > this.config.upperPrice) {
-        this.log(`⚠ Price ${price.toFixed(2)} out of range [${this.config.lowerPrice}–${this.config.upperPrice}] — no order`);
+        const now = Date.now();
+        if (now - this.lastOutOfRangeLogAt >= OUT_OF_RANGE_LOG_INTERVAL_MS) {
+          this.log(`⚠ Price $${price.toFixed(2)} di luar range [${this.config.lowerPrice}–${this.config.upperPrice}] — menunggu…`);
+          this.lastOutOfRangeLogAt = now;
+        }
         return;
       }
 
       const currentLevel = this.computeCurrentLevel(price);
 
-      // First tick: initialize baseline, place no orders
+      // First tick: initialize baseline (EXT-02: also persist to localStorage)
       if (this.lastLevel === null) {
-        this.lastLevel = currentLevel;
+        this.persistLastLevel(currentLevel);
         this.log(`Grid baseline set: level ${currentLevel}/${this.config.gridCount} @ $${price.toFixed(2)}`);
         return;
       }
 
-      if (currentLevel === this.lastLevel) {
-        // No crossing — silent (avoid log spam)
-        return;
-      }
+      if (currentLevel === this.lastLevel) return; // no crossing — silent
 
       const levelsMoved = currentLevel - this.lastLevel;
       const direction = levelsMoved < 0 ? "down" : "up";
       const side: "BUY" | "SELL" = levelsMoved < 0 ? "BUY" : "SELL";
       const reduceOnly = this.computeReduceOnly(side);
 
-      // Mode constraint: LONG only opens via BUY (and reduces via SELL);
-      // SHORT only opens via SELL (and reduces via BUY).
-      // For reduce-only we still place — it closes existing position.
       const prevLevel = this.lastLevel;
-      this.lastLevel = currentLevel; // update immediately to prevent re-trigger
+      // EXT-02: persist new level immediately to prevent re-trigger
+      this.persistLastLevel(currentLevel);
 
       this.log(
         `Grid crossing: ${Math.abs(levelsMoved)} level(s) ${direction} | ` +
         `${prevLevel} → ${currentLevel} | $${price.toFixed(2)} | → ${side}${reduceOnly ? " (reduceOnly)" : ""}`
       );
 
+      // ── GRID-REDUCEONLY-PRECHECK-001 ──────────────────────────────────────────
+      // Before sending reduceOnly order, verify a matching position exists.
+      // LONG+SELL needs long position (size > 0); SHORT+BUY needs short position (size < 0).
+      // Without this, the exchange will reject the reduceOnly order (no position to reduce).
+      // Mirror: extendedBotEngine GRID-REDUCEONLY-PRECHECK-001
+      if (reduceOnly) {
+        const pos = this.position;
+        const hasMatchingPosition =
+          side === "SELL"
+            ? pos !== null && pos.size > 0  // need long position to sell-reduce
+            : pos !== null && pos.size < 0; // need short position to buy-reduce
+        if (!hasMatchingPosition) {
+          this.log(
+            `Skip ${side} (reduceOnly): tidak ada posisi yang sesuai | ` +
+            `pos=${pos ? pos.size.toFixed(6) : "null"} | level tetap di ${currentLevel}`
+          );
+          return;
+        }
+      }
+
       const orderCount = Math.min(Math.abs(levelsMoved), MAX_GRID_ORDERS_PER_CROSSING);
 
       for (let i = 0; i < orderCount; i++) {
         if (!this.running) break;
 
-        // Level index for this iteration
         const levelIdx = levelsMoved < 0
-          ? prevLevel - i - 1  // going down: place at prevLevel-1, prevLevel-2, …
-          : prevLevel + i + 1; // going up:   place at prevLevel+1, prevLevel+2, …
+          ? prevLevel - i - 1
+          : prevLevel + i + 1;
 
-        // Clamp to valid range
         if (levelIdx < 0 || levelIdx >= this.config.gridCount + 1) continue;
+
+        // ── BUG-DUP-001: Duplicate order guard ────────────────────────────────
+        if (this.isDuplicateOrder(levelIdx, side)) {
+          this.log(`Skip dup: ${side} @ level ${levelIdx} (placed within last ${DUP_GUARD_MS / 1000}s)`);
+          continue;
+        }
 
         const orderPrice = this.levelBasePrice(levelIdx);
         const size = sizePerGrid(this.config.investment, this.config.gridCount, orderPrice, this.config.leverage);
+
+        // ── SIZE-GUARD ─────────────────────────────────────────────────────────
+        if (size <= 0) {
+          this.log(`Skip ${side} @ ${orderPrice.toFixed(2)}: size terlalu kecil (${size})`);
+          continue;
+        }
 
         const tx = buildAndSign(
           [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly, iso: true }],
@@ -353,8 +485,6 @@ export class BotRunner {
     this.ws.onerror = () => { this.log("WebSocket error."); };
   }
 
-  // Bulk.trade WS account stream:
-  // { type: "account", data: { type: "accountSnapshot"|"marginUpdate"|"positionUpdate"|"orderUpdate"|"fill"|..., ... } }
   private handleWsMessage(msg: any) {
     if (msg.type === "subscriptionResponse") return;
     if (msg.type !== "account") return;
@@ -363,11 +493,11 @@ export class BotRunner {
     if (!data?.type) return;
 
     switch (data.type) {
-      case "accountSnapshot":  this.handleSnapshot(data);      break;
-      case "marginUpdate":     this.handleMarginUpdate(data);  break;
+      case "accountSnapshot":  this.handleSnapshot(data);       break;
+      case "marginUpdate":     this.handleMarginUpdate(data);   break;
       case "positionUpdate":   this.handlePositionUpdate(data); break;
-      case "orderUpdate":      this.handleOrderUpdate(data);   break;
-      case "fill":             this.handleFill(data);          break;
+      case "orderUpdate":      this.handleOrderUpdate(data);    break;
+      case "fill":             this.handleFill(data);           break;
     }
   }
 
@@ -455,25 +585,22 @@ export class BotRunner {
     const isBuy       = Boolean(data.isBuy);
     const fee         = Number(data.fee ?? 0);
     this.log(`Fill: ${isBuy ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)} fee=${fee.toFixed(4)}`);
-
-    // Crossing detection handles order placement — no manual replenish needed here.
-    // The next price poll will fire runGridCheck and react to the new level naturally.
     this.onUpdate?.();
   }
 
   private parsePosition(p: any): PositionData {
     return {
-      symbol:           String(p.symbol          ?? ""),
-      size:             Number(p.size            ?? 0),
-      price:            Number(p.price           ?? 0),
-      fairPrice:        Number(p.fairPrice       ?? 0),
-      notional:         Number(p.notional        ?? 0),
-      realizedPnl:      Number(p.realizedPnl     ?? 0),
-      unrealizedPnl:    Number(p.unrealizedPnl   ?? 0),
-      leverage:         Number(p.leverage        ?? 0),
+      symbol:           String(p.symbol           ?? ""),
+      size:             Number(p.size             ?? 0),
+      price:            Number(p.price            ?? 0),
+      fairPrice:        Number(p.fairPrice        ?? 0),
+      notional:         Number(p.notional         ?? 0),
+      realizedPnl:      Number(p.realizedPnl      ?? 0),
+      unrealizedPnl:    Number(p.unrealizedPnl    ?? 0),
+      leverage:         Number(p.leverage         ?? 0),
       liquidationPrice: Number(p.liquidationPrice ?? 0),
-      fees:             Number(p.fees            ?? 0),
-      funding:          Number(p.funding         ?? 0),
+      fees:             Number(p.fees             ?? 0),
+      funding:          Number(p.funding          ?? 0),
     };
   }
 
@@ -492,11 +619,13 @@ export class BotRunner {
     };
   }
 
-  // ── Stop ────────────────────────────────────────────────────────────────────
+  // ── Stop ─────────────────────────────────────────────────────────────────────
 
   async stop(): Promise<void> {
     this.running = false;
     this.lastLevel = null;
+    // Clear persisted level so next start reinitializes from scratch
+    try { localStorage.removeItem(this.stateKey); } catch { /* ignore */ }
     this.log("Stopping bot...");
 
     if (this.pricePoller !== null) {

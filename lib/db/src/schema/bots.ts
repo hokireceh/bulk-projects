@@ -19,6 +19,8 @@ export const botsTable = pgTable("bots", {
   leverage: integer("leverage").notNull().default(1),
   accountPubkey: text("account_pubkey").notNull(),
   status: botStatusEnum("status").notNull().default("IDLE"),
+  stopLoss: real("stop_loss"),
+  takeProfit: real("take_profit"),
   totalPnl: real("total_pnl"),
   totalTrades: integer("total_trades"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
