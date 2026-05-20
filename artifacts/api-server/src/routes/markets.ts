@@ -101,7 +101,13 @@ router.post("/order", async (req, res): Promise<void> => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body),
     });
-    const data = await response.json();
+    const text = await response.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { error: text };
+    }
     res.status(response.status).json(data);
   } catch (err) {
     req.log.error({ err }, "Error proxying order to bulk.trade");
