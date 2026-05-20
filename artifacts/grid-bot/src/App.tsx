@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 
 import Dashboard from "@/pages/dashboard";
+import Markets from "@/pages/markets";
 import BotList from "@/pages/bots/list";
 import CreateBot from "@/pages/bots/create";
 import EditBot from "@/pages/bots/edit";
@@ -17,6 +18,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/markets" component={Markets} />
       <Route path="/bots" component={BotList} />
       <Route path="/bots/new" component={CreateBot} />
       <Route path="/bots/:id/edit" component={EditBot} />

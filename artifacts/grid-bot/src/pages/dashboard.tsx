@@ -61,7 +61,10 @@ export default function Dashboard() {
   const botsArray = Array.isArray(bots) ? bots : [];
   const activeBots = botsArray.filter(b => b.status === "RUNNING").length;
   const totalInvestment = botsArray.reduce((acc, b) => acc + b.investment, 0);
-  const totalPnl = botsArray.reduce((acc, b) => acc + (b.totalPnl || 0), 0);
+  // Live P&L from account API (realizedPnl + unrealizedPnl), falls back to 0
+  const livePnl = balance
+    ? (balance.realizedPnl ?? 0) + (balance.unrealizedPnl ?? 0)
+    : null;
 
   const fmt = (n: number) =>
     n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
@@ -100,9 +103,19 @@ export default function Dashboard() {
               <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className={`text-2xl font-bold ${totalPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
-                {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(2)}
-              </div>
+              {livePnl !== null ? (
+                <>
+                  <div className={`text-2xl font-bold ${livePnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                    {livePnl >= 0 ? "+" : ""}${livePnl.toFixed(2)}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-1 space-x-2">
+                    <span>Real: ${(balance?.realizedPnl ?? 0).toFixed(2)}</span>
+                    <span>Unreal: ${(balance?.unrealizedPnl ?? 0).toFixed(2)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="text-2xl font-bold text-muted-foreground">—</div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -187,8 +200,8 @@ export default function Dashboard() {
                         <div className="text-sm text-muted-foreground">{bot.symbol} • {bot.mode}</div>
                       </div>
                       <div className="text-right">
-                        <div className={`font-medium ${bot.totalPnl && bot.totalPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
-                          {bot.totalPnl && bot.totalPnl >= 0 ? "+" : ""}${bot.totalPnl?.toFixed(2) || "0.00"}
+                        <div className={`font-medium ${livePnl !== null ? (livePnl >= 0 ? "text-green-500" : "text-red-500") : "text-muted-foreground"}`}>
+                          {livePnl !== null ? `${livePnl >= 0 ? "+" : ""}$${livePnl.toFixed(2)}` : "—"}
                         </div>
                         <div className="text-sm text-muted-foreground">${bot.investment} Inv.</div>
                       </div>
