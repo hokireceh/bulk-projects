@@ -13,14 +13,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Play, Square, Terminal, Pencil } from "lucide-react";
 import { Link } from "wouter";
 import { allGridLevels } from "@/lib/gridEngine";
-import { BotRunner, type BotConfig, type LogLine, type MarginData, type PositionData, type LiveOrder } from "@/lib/botRunner";
+import { type LogLine, type MarginData, type PositionData, type LiveOrder } from "@/lib/botRunner";
+import { useBotRunnerContext } from "@/lib/botRunnerContext";
 import { getPrivateKey, getEndpoint } from "@/lib/keys";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
 const PROXY_API = "/api";
 
-// Fetch account data directly from bulk.trade (via our proxy)
 async function fetchAccountData(pubkey: string, type: string): Promise<any[]> {
   const res = await fetch(`${PROXY_API}/account`, {
     method: "POST",
@@ -36,12 +36,11 @@ export default function BotDetail() {
   const botId = Number(id);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { startRunner, stopRunner, getRunner } = useBotRunnerContext();
 
-  const runnerRef = useRef<BotRunner | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Live data from bulk.trade — NOT from DB
   const [margin, setMargin] = useState<MarginData | null>(null);
   const [position, setPosition] = useState<PositionData | null>(null);
   const [liveOrders, setLiveOrders] = useState<LiveOrder[]>([]);
@@ -64,7 +63,18 @@ export default function BotDetail() {
   const startBot = useStartBot();
   const stopBot  = useStopBot();
 
-  // Called whenever runner stops for any reason (manual, SL/TP, unmount)
+  const syncFromRunner = useCallback(() => {
+    const runner = getRunner(botId);
+    if (!runner) return;
+    setLogs([...runner.logs]);
+    if (runner.margin)   setMargin({ ...runner.margin });
+    if (runner.position) setPosition({ ...runner.position });
+    setLiveOrders([...runner.openOrders]);
+    setTotalTrades(runner.totalTrades);
+    if (runner.currentPrice > 0) setRunnerPrice(runner.currentPrice);
+    setLastLevel(runner.lastLevel ?? null);
+  }, [botId, getRunner]);
+
   const handleRunnerStopped = useCallback(() => {
     stopBot.mutate({ id: botId }, {
       onSuccess: () => {
@@ -74,38 +84,32 @@ export default function BotDetail() {
     });
   }, [botId, stopBot, queryClient]);
 
-  const tickerPrice: number = ticker?.markPrice ?? 0;
-  // Prefer live price from the running bot's poller; fall back to ticker
-  const currentPrice = runnerPrice > 0 ? runnerPrice : tickerPrice;
-
-  // All grid level boundary prices (no BUY/SELL assignment — that's decided at crossing time)
-  const gridBoundaries = bot
-    ? allGridLevels(bot.lowerPrice, bot.upperPrice, bot.gridCount)
-    : [];
-
-  // Sync live data from runner on every update
-  const syncFromRunner = useCallback(() => {
-    const r = runnerRef.current;
-    if (!r) return;
-    setLogs([...r.logs]);
-    if (r.margin)   setMargin({ ...r.margin });
-    if (r.position) setPosition({ ...r.position });
-    setLiveOrders([...r.openOrders]);
-    setTotalTrades(r.totalTrades);
-    if (r.currentPrice > 0) setRunnerPrice(r.currentPrice);
-    setLastLevel((r as any).lastLevel ?? null);
-  }, []);
-
-  // On page load: restore logs + fetch live account data from bulk.trade
+  // Poll runner state every 500ms while on this page — works after re-navigation too
   useEffect(() => {
     if (!botId) return;
+    // Restore saved logs immediately on mount
     try {
       const saved = localStorage.getItem(`bot_logs_${botId}`);
       if (saved) setLogs(JSON.parse(saved) as LogLine[]);
     } catch { /* ignore */ }
-  }, [botId]);
 
-  // Fetch account snapshot (margin + positions + open orders) from bulk.trade on mount
+    const interval = setInterval(() => {
+      const runner = getRunner(botId);
+      if (!runner) return;
+      setLogs([...runner.logs]);
+      if (runner.margin)   setMargin({ ...runner.margin });
+      if (runner.position) setPosition({ ...runner.position });
+      setLiveOrders([...runner.openOrders]);
+      setTotalTrades(runner.totalTrades);
+      if (runner.currentPrice > 0) setRunnerPrice(runner.currentPrice);
+      setLastLevel(runner.lastLevel ?? null);
+    }, 500);
+
+    return () => clearInterval(interval);
+    // NOTE: no runner.stop() on unmount — runner lives in global context
+  }, [botId, getRunner]);
+
+  // Fetch account snapshot on mount (balance + positions + open orders)
   useEffect(() => {
     if (!bot?.accountPubkey) return;
     fetchAccountData(bot.accountPubkey, "fullAccount").then((rows) => {
@@ -166,15 +170,6 @@ export default function BotDetail() {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // Stop runner on unmount — runner.stop() will fire onStopped which updates DB
-  useEffect(() => {
-    return () => {
-      if (runnerRef.current?.isRunning) {
-        void runnerRef.current.stop();
-      }
-    };
-  }, []);
-
   const handleStart = async () => {
     if (!bot) return;
     const pk = getPrivateKey();
@@ -187,7 +182,6 @@ export default function BotDetail() {
       return;
     }
 
-    // Mark RUNNING in DB
     startBot.mutate({ id: bot.id }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getGetBotQueryKey(botId) });
@@ -195,8 +189,7 @@ export default function BotDetail() {
       },
     });
 
-    // Create and start BotRunner (constructor restores logs from localStorage)
-    const runner = new BotRunner(
+    startRunner(
       {
         botId,
         accountPubkey: bot.accountPubkey,
@@ -212,20 +205,14 @@ export default function BotDetail() {
       syncFromRunner,
       handleRunnerStopped,
     );
-    runnerRef.current = runner;
-    setLogs([...runner.logs]); // sync restored logs immediately
-    runner.start();
   };
 
   const handleStop = async () => {
     if (!bot) return;
-    const runner = runnerRef.current;
+    const runner = getRunner(botId);
     if (runner) {
-      // runner.stop() will fire onStopped → handleRunnerStopped → stopBot.mutate
-      await runner.stop();
-      runnerRef.current = null;
+      await stopRunner(botId);
     } else {
-      // Runner not present (e.g. page was refreshed) — call API directly
       stopBot.mutate({ id: bot.id }, {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getGetBotQueryKey(botId) });
@@ -234,6 +221,13 @@ export default function BotDetail() {
       });
     }
   };
+
+  const tickerPrice: number = ticker?.markPrice ?? 0;
+  const currentPrice = runnerPrice > 0 ? runnerPrice : tickerPrice;
+
+  const gridBoundaries = bot
+    ? allGridLevels(bot.lowerPrice, bot.upperPrice, bot.gridCount)
+    : [];
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -244,7 +238,6 @@ export default function BotDetail() {
     }
   };
 
-  // Compute displayed P&L: prefer position-level (symbol-specific), fall back to account margin
   const displayedRealizedPnl   = position?.realizedPnl   ?? margin?.realizedPnl   ?? null;
   const displayedUnrealizedPnl = position?.unrealizedPnl ?? margin?.unrealizedPnl ?? null;
   const totalPnl = displayedRealizedPnl !== null
@@ -315,7 +308,7 @@ export default function BotDetail() {
             <CardContent>
               <div className="h-[420px] relative w-full rounded-md border border-border bg-background/50 p-3 flex flex-col justify-between overflow-hidden">
                 {[...gridBoundaries].reverse().map((price, i) => {
-                  const levelIdx = gridBoundaries.length - 1 - i; // index from bottom
+                  const levelIdx = gridBoundaries.length - 1 - i;
                   const isCurrentBand = lastLevel !== null && levelIdx === lastLevel;
                   const abovePrice = currentPrice > 0 && price > currentPrice;
                   const belowPrice = currentPrice > 0 && price <= currentPrice;
@@ -334,7 +327,6 @@ export default function BotDetail() {
                     </div>
                   );
                 })}
-                {/* Current price marker */}
                 {currentPrice > 0 && bot.upperPrice > bot.lowerPrice && (
                   <div
                     className="absolute left-0 right-0 border-t-2 border-primary/60 border-dashed z-20 pointer-events-none"
@@ -355,7 +347,6 @@ export default function BotDetail() {
           <div className="col-span-2 space-y-4">
             {/* Stats row */}
             <div className="grid grid-cols-3 gap-4">
-              {/* Total P&L from bulk.trade */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Total P&L</CardTitle>
@@ -377,7 +368,6 @@ export default function BotDetail() {
                 </CardContent>
               </Card>
 
-              {/* Fills count from WS stream */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Fills (session)</CardTitle>
@@ -392,7 +382,6 @@ export default function BotDetail() {
                 </CardContent>
               </Card>
 
-              {/* Account balance from bulk.trade */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Balance</CardTitle>
@@ -436,7 +425,7 @@ export default function BotDetail() {
               </CardContent>
             </Card>
 
-            {/* Live Open Orders from bulk.trade */}
+            {/* Live Open Orders */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">

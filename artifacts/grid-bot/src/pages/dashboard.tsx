@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback } from "react";
 import { getPrivateKey, derivePublicKey, getEndpoint } from "@/lib/keys";
+import { useBotRunnerContext } from "@/lib/botRunnerContext";
 
 interface AccountMargin {
   totalBalance: number;
@@ -35,6 +36,7 @@ async function fetchAccountBalance(pubkey: string): Promise<AccountMargin | null
 
 export default function Dashboard() {
   const { data: bots, isLoading } = useListBots();
+  const { getRunner } = useBotRunnerContext();
   const [balance, setBalance] = useState<AccountMargin | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
   const [pubkey, setPubkey] = useState("");
@@ -191,24 +193,38 @@ export default function Dashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {botsArray.filter(b => b.status === "RUNNING").map(bot => (
-                <Link key={bot.id} href={`/bots/${bot.id}`}>
-                  <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
-                    <CardContent className="p-4 flex items-center justify-between">
-                      <div>
-                        <div className="font-medium text-lg">{bot.name}</div>
-                        <div className="text-sm text-muted-foreground">{bot.symbol} • {bot.mode}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className={`font-medium ${livePnl !== null ? (livePnl >= 0 ? "text-green-500" : "text-red-500") : "text-muted-foreground"}`}>
-                          {livePnl !== null ? `${livePnl >= 0 ? "+" : ""}$${livePnl.toFixed(2)}` : "—"}
+              {botsArray.filter(b => b.status === "RUNNING").map(bot => {
+                const runner = getRunner(bot.id);
+                const pos = runner?.position;
+                const margin = runner?.margin;
+                const botPnl = pos != null
+                  ? (pos.realizedPnl ?? 0) + (pos.unrealizedPnl ?? 0)
+                  : margin != null
+                    ? (margin.realizedPnl ?? 0) + (margin.unrealizedPnl ?? 0)
+                    : null;
+                return (
+                  <Link key={bot.id} href={`/bots/${bot.id}`}>
+                    <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
+                      <CardContent className="p-4 flex items-center justify-between">
+                        <div>
+                          <div className="font-medium text-lg">{bot.name}</div>
+                          <div className="text-sm text-muted-foreground">{bot.symbol} • {bot.mode}</div>
                         </div>
-                        <div className="text-sm text-muted-foreground">${bot.investment} Inv.</div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              ))}
+                        <div className="text-right">
+                          {botPnl !== null ? (
+                            <div className={`font-medium ${botPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                              {botPnl >= 0 ? "+" : ""}${botPnl.toFixed(2)}
+                            </div>
+                          ) : (
+                            <div className="font-medium text-muted-foreground">—</div>
+                          )}
+                          <div className="text-sm text-muted-foreground">${bot.investment} Inv.</div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </div>
