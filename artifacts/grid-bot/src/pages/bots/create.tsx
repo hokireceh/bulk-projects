@@ -1,5 +1,5 @@
 import { Layout } from "@/components/layout";
-import { useCreateBot } from "@workspace/api-client-react";
+import { useCreateBot, useGetMarkets } from "@workspace/api-client-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -7,10 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useLocation } from "wouter";
 import { getPrivateKey, derivePublicKey } from "@/lib/keys";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import { Check, ChevronsUpDown, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -30,12 +35,17 @@ export default function CreateBot() {
   const [, setLocation] = useLocation();
   const createBot = useCreateBot();
   const { toast } = useToast();
+  const [symbolOpen, setSymbolOpen] = useState(false);
+
+  const { data: markets, isLoading: marketsLoading } = useGetMarkets();
+
+  const tradingMarkets = markets?.filter(m => m.status === "TRADING") ?? [];
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: "My Grid Bot",
-      symbol: "BTC-USD",
+      symbol: "",
       mode: "NEUTRAL",
       lowerPrice: 50000,
       upperPrice: 70000,
@@ -77,7 +87,7 @@ export default function CreateBot() {
         toast({ title: "Bot Created", description: "Your grid bot was successfully created." });
         setLocation(`/bots/${bot.id}`);
       },
-      onError: (err) => {
+      onError: () => {
         toast({
           title: "Error",
           description: "Failed to create bot.",
@@ -116,15 +126,71 @@ export default function CreateBot() {
                       </FormItem>
                     )}
                   />
+
                   <FormField
                     control={form.control}
                     name="symbol"
                     render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Trading Pair (Symbol)</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="e.g. BTC-USD" />
-                        </FormControl>
+                      <FormItem className="flex flex-col">
+                        <FormLabel>Trading Pair</FormLabel>
+                        <Popover open={symbolOpen} onOpenChange={setSymbolOpen}>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                aria-expanded={symbolOpen}
+                                className={cn(
+                                  "w-full justify-between font-normal",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value
+                                  ? (() => {
+                                      const m = tradingMarkets.find(m => m.symbol === field.value);
+                                      return m ? `${m.symbol} (${m.baseAsset}/${m.quoteAsset})` : field.value;
+                                    })()
+                                  : marketsLoading
+                                  ? "Loading markets..."
+                                  : "Select trading pair"}
+                                {marketsLoading
+                                  ? <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin" />
+                                  : <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />}
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-72 p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search pair..." />
+                              <CommandList>
+                                <CommandEmpty>No markets found.</CommandEmpty>
+                                <CommandGroup>
+                                  {tradingMarkets.map((market) => (
+                                    <CommandItem
+                                      key={market.symbol}
+                                      value={market.symbol}
+                                      onSelect={(val) => {
+                                        field.onChange(val.toUpperCase());
+                                        setSymbolOpen(false);
+                                      }}
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "mr-2 h-4 w-4",
+                                          field.value === market.symbol ? "opacity-100" : "opacity-0"
+                                        )}
+                                      />
+                                      <span className="font-medium">{market.symbol}</span>
+                                      <span className="ml-2 text-xs text-muted-foreground">
+                                        {market.baseAsset}/{market.quoteAsset} · {market.maxLeverage}x max
+                                      </span>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -144,9 +210,9 @@ export default function CreateBot() {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="LONG">Long (Buy low, sell high in uptrend)</SelectItem>
-                          <SelectItem value="SHORT">Short (Sell high, buy low in downtrend)</SelectItem>
-                          <SelectItem value="NEUTRAL">Neutral (Profit from sideways oscillation)</SelectItem>
+                          <SelectItem value="LONG">Long — buy low, sell high (uptrend)</SelectItem>
+                          <SelectItem value="SHORT">Short — sell high, buy low (downtrend)</SelectItem>
+                          <SelectItem value="NEUTRAL">Neutral — profit from sideways oscillation</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />

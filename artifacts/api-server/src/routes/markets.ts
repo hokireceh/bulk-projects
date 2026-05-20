@@ -73,4 +73,24 @@ router.get("/markets/:symbol/ticker", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/account", async (req, res): Promise<void> => {
+  try {
+    const response = await fetch(`${BULK_API}/account`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    if (!response.ok) {
+      req.log.warn({ status: response.status }, "Failed to fetch account from bulk.trade");
+      res.status(response.status).json({ error: "Failed to fetch account data" });
+      return;
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    req.log.error({ err }, "Error proxying account");
+    res.status(502).json({ error: "Failed to fetch account data" });
+  }
+});
+
 export default router;
