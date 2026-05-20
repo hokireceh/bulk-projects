@@ -27,19 +27,27 @@ export class BotRunner {
   private currentPrice = 0;
   public logs: LogLine[] = [];
   private onUpdate?: () => void;
+  private storageKey: string;
 
   constructor(
     private config: BotConfig,
     onUpdate?: () => void
   ) {
     this.onUpdate = onUpdate;
+    this.storageKey = `bot_logs_${config.botId}`;
+    // Restore logs from previous session
+    try {
+      const saved = localStorage.getItem(this.storageKey);
+      if (saved) this.logs = JSON.parse(saved) as LogLine[];
+    } catch { /* ignore */ }
   }
 
   get isRunning() { return this.running; }
 
   private log(msg: string) {
     this.logs.push({ ts: Date.now(), msg });
-    if (this.logs.length > 200) this.logs.shift();
+    if (this.logs.length > 300) this.logs.shift();
+    try { localStorage.setItem(this.storageKey, JSON.stringify(this.logs)); } catch { /* ignore */ }
     this.onUpdate?.();
   }
 

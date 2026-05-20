@@ -54,6 +54,15 @@ export default function BotDetail() {
     ? calculateGridLevels(bot.lowerPrice, bot.upperPrice, bot.gridCount, bot.mode, priceForGrid)
     : [];
 
+  // Load persisted logs from localStorage when bot page opens
+  useEffect(() => {
+    if (!botId) return;
+    try {
+      const saved = localStorage.getItem(`bot_logs_${botId}`);
+      if (saved) setLogs(JSON.parse(saved) as LogLine[]);
+    } catch { /* ignore */ }
+  }, [botId]);
+
   // Auto-scroll logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -88,8 +97,7 @@ export default function BotDetail() {
       },
     });
 
-    // Create and start BotRunner
-    setLogs([]);
+    // Create and start BotRunner (constructor restores logs from localStorage)
     const runner = new BotRunner(
       {
         botId,
@@ -106,6 +114,7 @@ export default function BotDetail() {
       () => setLogs([...runner.logs])
     );
     runnerRef.current = runner;
+    setLogs([...runner.logs]); // sync any restored logs immediately
     runner.start();
   };
 
