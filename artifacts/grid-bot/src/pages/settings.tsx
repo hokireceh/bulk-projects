@@ -10,10 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { KeyRound, ShieldAlert, Wallet, Droplets } from "lucide-react";
 
-const ENDPOINTS: Record<string, string> = {
-  staging:    "https://staging-api.bulk.trade/api/v1",
-  production: "https://api.bulk.trade/api/v1",
-};
+// All signed transactions go through our API proxy to avoid browser CORS issues.
+// The proxy forwards to the upstream bulk.trade endpoint server-side.
+const PROXY_API = "/api";
 
 export default function Settings() {
   const [pk, setPk] = useState("");
@@ -58,7 +57,7 @@ export default function Settings() {
     }
     setFaucetLoading(true);
     try {
-      const result = await requestFaucet({ privateKey: savedPk, account: pubkey, endpoint: ENDPOINTS[endpoint] ?? ENDPOINTS.staging });
+      const result = await requestFaucet({ privateKey: savedPk, account: pubkey, endpoint: PROXY_API });
       if (result.ok) {
         toast({ title: "Faucet requested", description: "Testnet funds should arrive shortly." });
       } else {

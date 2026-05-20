@@ -86,6 +86,7 @@ export interface CancelAllAction {
 
 export interface FaucetAction {
   type: "faucet";
+  user: string;   // recipient pubkey (base58); required per docs (`u` field)
   amount?: number; // optional; plain f64
 }
 
@@ -115,6 +116,8 @@ function encodeAction(w: WincodeWriter, action: BulkAction) {
 
   if (action.type === "faucet") {
     w.u32le(ACTION_CODES.faucet);
+    // Binary layout: [32 bytes user pubkey] [1 byte amount tag] [8 bytes plain f64 if Some]
+    w.raw(bs58.decode(action.user)); // 32 raw bytes
     if (action.amount !== undefined) {
       w.u8(1); // Option::Some
       w.f64le(action.amount); // plain f64, NOT scaled
@@ -145,9 +148,10 @@ function actionToJson(action: BulkAction): unknown {
     return { cxa: { c: action.symbols } };
   }
   if (action.type === "faucet") {
+    // JSON field name is `u` per docs: { "faucet": { "u": "pubkey" } }
     return action.amount !== undefined
-      ? { faucet: { amount: action.amount } }
-      : { faucet: {} };
+      ? { faucet: { u: action.user, amount: action.amount } }
+      : { faucet: { u: action.user } };
   }
   return {};
 }
@@ -261,8 +265,9 @@ export async function requestFaucet(opts: {
   account: string;
   endpoint: string;
 }): Promise<{ ok: boolean; error?: string }> {
+  // The faucet action requires `user` (recipient pubkey) both in binary and JSON
   const tx = buildAndSign(
-    [{ type: "faucet" }],
+    [{ type: "faucet", user: opts.account }],
     opts.account,
     opts.privateKey
   );

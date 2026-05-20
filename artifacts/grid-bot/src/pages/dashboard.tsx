@@ -58,9 +58,10 @@ export default function Dashboard() {
     }
   }, [loadBalance]);
 
-  const activeBots = bots?.filter(b => b.status === "RUNNING")?.length || 0;
-  const totalInvestment = bots?.reduce((acc, b) => acc + b.investment, 0) || 0;
-  const totalPnl = bots?.reduce((acc, b) => acc + (b.totalPnl || 0), 0) || 0;
+  const botsArray = Array.isArray(bots) ? bots : [];
+  const activeBots = botsArray.filter(b => b.status === "RUNNING").length;
+  const totalInvestment = botsArray.reduce((acc, b) => acc + b.investment, 0);
+  const totalPnl = botsArray.reduce((acc, b) => acc + (b.totalPnl || 0), 0);
 
   const fmt = (n: number) =>
     n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2 });
@@ -81,7 +82,7 @@ export default function Dashboard() {
               <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{activeBots} / {bots?.length || 0}</div>
+              <div className="text-2xl font-bold">{activeBots} / {botsArray.length}</div>
             </CardContent>
           </Card>
           <Card>
@@ -177,7 +178,7 @@ export default function Dashboard() {
             </Card>
           ) : (
             <div className="space-y-4">
-              {bots?.filter(b => b.status === "RUNNING").map(bot => (
+              {botsArray.filter(b => b.status === "RUNNING").map(bot => (
                 <Link key={bot.id} href={`/bots/${bot.id}`}>
                   <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
                     <CardContent className="p-4 flex items-center justify-between">
