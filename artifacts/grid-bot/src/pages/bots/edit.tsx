@@ -42,6 +42,7 @@ const priceField = z.preprocess(parseLocaleNumber, z.number().positive("Harus le
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   mode: z.enum(["LONG", "SHORT", "NEUTRAL"]),
+  orderMode: z.enum(["UPFRONT", "REACTIVE"]).default("REACTIVE"),
   lowerPrice: priceField,
   upperPrice: priceField,
   gridCount: z.coerce.number().int().min(2).max(200),
@@ -103,6 +104,7 @@ export default function EditBot() {
     defaultValues: {
       name: "",
       mode: "NEUTRAL",
+      orderMode: "REACTIVE",
       lowerPrice: 0,
       upperPrice: 0,
       gridCount: 10,
@@ -116,6 +118,7 @@ export default function EditBot() {
       form.reset({
         name: bot.name,
         mode: bot.mode as "LONG" | "SHORT" | "NEUTRAL",
+        orderMode: (bot.orderMode ?? "REACTIVE") as "UPFRONT" | "REACTIVE",
         lowerPrice: bot.lowerPrice,
         upperPrice: bot.upperPrice,
         gridCount: bot.gridCount,
@@ -211,6 +214,40 @@ export default function EditBot() {
                           <SelectItem value="NEUTRAL">Neutral — profit from sideways oscillation</SelectItem>
                         </SelectContent>
                       </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="orderMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Cara Pasang Order</FormLabel>
+                      <div className="grid grid-cols-2 gap-3">
+                        {(["REACTIVE", "UPFRONT"] as const).map((val) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => field.onChange(val)}
+                            className={`rounded-lg border p-4 text-left transition-colors ${
+                              field.value === val
+                                ? "border-primary bg-primary/10 text-foreground"
+                                : "border-border bg-muted/20 text-muted-foreground hover:border-primary/50"
+                            }`}
+                          >
+                            <div className="font-semibold text-sm mb-1">
+                              {val === "REACTIVE" ? "Reaktif (default)" : "Upfront"}
+                            </div>
+                            <div className="text-xs leading-snug">
+                              {val === "REACTIVE"
+                                ? "Order dipasang hanya saat harga crossing level grid"
+                                : "Semua order grid langsung dipasang saat bot start"}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}

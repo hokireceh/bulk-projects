@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { BotInputMode } from './botInputMode';
+import type { BotInputOrderMode } from './botInputOrderMode';
 
 export interface BotInput {
   name: string;
@@ -17,4 +18,10 @@ export interface BotInput {
   investment: number;
   leverage?: number;
   accountPubkey: string;
+  /** UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default). */
+  orderMode?: BotInputOrderMode;
+  /** Auto-stop if price drops below (LONG/NEUTRAL) or rises above (SHORT) this value */
+  stopLoss?: number | null;
+  /** Auto-stop if price rises above (LONG/NEUTRAL) or drops below (SHORT) this value */
+  takeProfit?: number | null;
 }

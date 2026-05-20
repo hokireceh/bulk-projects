@@ -28,6 +28,17 @@ export const BotStatus = {
   ERROR: 'ERROR',
 } as const;
 
+/**
+ * UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).
+ */
+export type BotOrderMode = typeof BotOrderMode[keyof typeof BotOrderMode];
+
+
+export const BotOrderMode = {
+  UPFRONT: 'UPFRONT',
+  REACTIVE: 'REACTIVE',
+} as const;
+
 export interface Bot {
   id: number;
   name: string;
@@ -44,6 +55,18 @@ export interface Bot {
   /** Trader's public key (base58), never store private key */
   accountPubkey: string;
   status: BotStatus;
+  /** UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default). */
+  orderMode?: BotOrderMode;
+  /**
+     * Auto-stop price threshold (below for LONG/NEUTRAL, above for SHORT)
+     * @nullable
+     */
+  stopLoss?: number | null;
+  /**
+     * Auto-stop price threshold (above for LONG/NEUTRAL, below for SHORT)
+     * @nullable
+     */
+  takeProfit?: number | null;
   /** @nullable */
   totalPnl?: number | null;
   /** @nullable */
@@ -61,6 +84,17 @@ export const BotInputMode = {
   NEUTRAL: 'NEUTRAL',
 } as const;
 
+/**
+ * UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).
+ */
+export type BotInputOrderMode = typeof BotInputOrderMode[keyof typeof BotInputOrderMode];
+
+
+export const BotInputOrderMode = {
+  UPFRONT: 'UPFRONT',
+  REACTIVE: 'REACTIVE',
+} as const;
+
 export interface BotInput {
   name: string;
   symbol: string;
@@ -71,6 +105,12 @@ export interface BotInput {
   investment: number;
   leverage?: number;
   accountPubkey: string;
+  /** UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default). */
+  orderMode?: BotInputOrderMode;
+  /** Auto-stop if price drops below (LONG/NEUTRAL) or rises above (SHORT) this value */
+  stopLoss?: number | null;
+  /** Auto-stop if price rises above (LONG/NEUTRAL) or drops below (SHORT) this value */
+  takeProfit?: number | null;
 }
 
 export type BotUpdateMode = typeof BotUpdateMode[keyof typeof BotUpdateMode];
@@ -82,6 +122,14 @@ export const BotUpdateMode = {
   NEUTRAL: 'NEUTRAL',
 } as const;
 
+export type BotUpdateOrderMode = typeof BotUpdateOrderMode[keyof typeof BotUpdateOrderMode];
+
+
+export const BotUpdateOrderMode = {
+  UPFRONT: 'UPFRONT',
+  REACTIVE: 'REACTIVE',
+} as const;
+
 export interface BotUpdate {
   name?: string;
   mode?: BotUpdateMode;
@@ -90,6 +138,9 @@ export interface BotUpdate {
   gridCount?: number;
   investment?: number;
   leverage?: number;
+  orderMode?: BotUpdateOrderMode;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 
 export type BotOrderSide = typeof BotOrderSide[keyof typeof BotOrderSide];

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { BotUpdateMode } from './botUpdateMode';
+import type { BotUpdateOrderMode } from './botUpdateOrderMode';
 
 export interface BotUpdate {
   name?: string;
@@ -15,4 +16,7 @@ export interface BotUpdate {
   gridCount?: number;
   investment?: number;
   leverage?: number;
+  orderMode?: BotUpdateOrderMode;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }

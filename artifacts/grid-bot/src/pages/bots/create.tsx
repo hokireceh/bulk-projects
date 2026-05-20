@@ -49,6 +49,7 @@ const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   symbol: z.string().min(1, "Symbol is required"),
   mode: z.enum(["LONG", "SHORT", "NEUTRAL"]),
+  orderMode: z.enum(["UPFRONT", "REACTIVE"]).default("REACTIVE"),
   lowerPrice: priceField,
   upperPrice: priceField,
   gridCount: z.coerce.number().int().min(2).max(200),
@@ -108,6 +109,7 @@ export default function CreateBot() {
       name: "My Grid Bot",
       symbol: "",
       mode: "NEUTRAL",
+      orderMode: "REACTIVE",
       lowerPrice: 50000,
       upperPrice: 70000,
       gridCount: 10,
@@ -277,6 +279,40 @@ export default function CreateBot() {
                           <SelectItem value="NEUTRAL">Neutral — profit from sideways oscillation</SelectItem>
                         </SelectContent>
                       </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="orderMode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Cara Pasang Order</FormLabel>
+                      <div className="grid grid-cols-2 gap-3">
+                        {(["REACTIVE", "UPFRONT"] as const).map((val) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => field.onChange(val)}
+                            className={`rounded-lg border p-4 text-left transition-colors ${
+                              field.value === val
+                                ? "border-primary bg-primary/10 text-foreground"
+                                : "border-border bg-muted/20 text-muted-foreground hover:border-primary/50"
+                            }`}
+                          >
+                            <div className="font-semibold text-sm mb-1">
+                              {val === "REACTIVE" ? "Reaktif (default)" : "Upfront"}
+                            </div>
+                            <div className="text-xs leading-snug">
+                              {val === "REACTIVE"
+                                ? "Order dipasang hanya saat harga crossing level grid"
+                                : "Semua order grid langsung dipasang saat bot start"}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
                       <FormMessage />
                     </FormItem>
                   )}

@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 export const botModeEnum = pgEnum("bot_mode", ["LONG", "SHORT", "NEUTRAL"]);
 export const botStatusEnum = pgEnum("bot_status", ["IDLE", "RUNNING", "STOPPED", "ERROR"]);
+export const botOrderModeEnum = pgEnum("bot_order_mode", ["UPFRONT", "REACTIVE"]);
 export const orderSideEnum = pgEnum("order_side", ["BUY", "SELL"]);
 export const orderStatusEnum = pgEnum("order_status", ["OPEN", "FILLED", "CANCELLED"]);
 
@@ -19,6 +20,7 @@ export const botsTable = pgTable("bots", {
   leverage: integer("leverage").notNull().default(1),
   accountPubkey: text("account_pubkey").notNull(),
   status: botStatusEnum("status").notNull().default("IDLE"),
+  orderMode: botOrderModeEnum("order_mode").notNull().default("REACTIVE"),
   stopLoss: real("stop_loss"),
   takeProfit: real("take_profit"),
   totalPnl: real("total_pnl"),

@@ -25,6 +25,7 @@ export interface BotConfig {
   privateKey: string;
   symbol: string;
   mode: "LONG" | "SHORT" | "NEUTRAL";
+  orderMode: "UPFRONT" | "REACTIVE";
   lowerPrice: number;
   upperPrice: number;
   gridCount: number;
@@ -268,22 +269,29 @@ export class BotRunner {
       });
       this.log(cancelled ? "Existing orders cancelled." : "Cancel returned error (may be none open).");
 
-      // EXT-02: Restore lastLevel from localStorage if available
-      const restored = this.restoreLastLevel();
-      if (restored) {
-        this.log(
-          `Restored lastLevel=${this.lastLevel} from previous session | ` +
-          `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
-          `spacing ${this.gridSpacing.toFixed(2)}`
-        );
+      this.log(
+        `Grid initialized: ${this.config.gridCount} levels | ` +
+        `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
+        `spacing ${this.gridSpacing.toFixed(2)} | ` +
+        `mode=${this.config.orderMode}`
+      );
+
+      if (this.config.orderMode === "UPFRONT") {
+        // UPFRONT: place all grid orders immediately, then only monitor SL/TP
+        await this.placeAllOrdersUpfront(price);
       } else {
-        this.lastLevel = null;
-        this.log(
-          `Grid initialized: ${this.config.gridCount} levels | ` +
-          `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
-          `spacing ${this.gridSpacing.toFixed(2)}`
-        );
-        this.log("Waiting for first price tick to set baseline level…");
+        // REACTIVE: restore lastLevel from localStorage if available
+        const restored = this.restoreLastLevel();
+        if (restored) {
+          this.log(
+            `Restored lastLevel=${this.lastLevel} from previous session | ` +
+            `range ${this.config.lowerPrice}–${this.config.upperPrice} | ` +
+            `spacing ${this.gridSpacing.toFixed(2)}`
+          );
+        } else {
+          this.lastLevel = null;
+          this.log("Waiting for first price tick to set baseline level…");
+        }
       }
 
       this.connectWebSocket();
@@ -294,6 +302,65 @@ export class BotRunner {
       this.running = false;
       this.onUpdate?.();
     }
+  }
+
+  // ── UPFRONT: place all grid orders at start ──────────────────────────────────
+
+  /**
+   * UPFRONT mode: place a limit order at every grid level immediately.
+   *
+   * LONG:    BUY at every level (accumulate longs; no reduce-only sells since no position yet)
+   * SHORT:   SELL at every level (accumulate shorts; no reduce-only buys since no position yet)
+   * NEUTRAL: BUY at levels ≤ current price, SELL at levels > current price
+   */
+  private async placeAllOrdersUpfront(currentPrice: number): Promise<void> {
+    const currentLevel = this.computeCurrentLevel(currentPrice);
+    this.log(`UPFRONT: placing all ${this.config.gridCount} grid orders @ mark $${currentPrice.toFixed(2)}…`);
+
+    let placed = 0;
+    let skipped = 0;
+
+    for (let levelIdx = 0; levelIdx < this.config.gridCount; levelIdx++) {
+      if (!this.running) break;
+
+      const orderPrice = this.levelBasePrice(levelIdx);
+      const size = sizePerGrid(this.config.investment, this.config.gridCount, orderPrice, this.config.leverage);
+
+      if (size <= 0) { skipped++; continue; }
+
+      let side: "BUY" | "SELL";
+      if (this.config.mode === "LONG") {
+        side = "BUY";
+      } else if (this.config.mode === "SHORT") {
+        side = "SELL";
+      } else {
+        // NEUTRAL: BUY below current price, SELL above
+        side = levelIdx <= currentLevel ? "BUY" : "SELL";
+      }
+
+      const tx = buildAndSign(
+        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly: false, iso: true }],
+        this.config.accountPubkey,
+        this.config.privateKey
+      );
+
+      const result = await submitTransaction(tx, PROXY_API, getEndpoint());
+      if (result.ok) {
+        placed++;
+        this.totalTrades++;
+        const st = result.statuses?.[0] as any;
+        const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
+        this.log(`✓ UPFRONT ${side} ${size.toFixed(6)} @ ${orderPrice.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
+      } else {
+        skipped++;
+        this.log(`✗ UPFRONT ${side} @ ${orderPrice.toFixed(2)}: ${result.error}`);
+      }
+
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    this.log(`UPFRONT done: ${placed} orders placed, ${skipped} skipped.`);
+    this.onUpdate?.();
   }
 
   // ── Price poller ─────────────────────────────────────────────────────────────
@@ -365,6 +432,9 @@ export class BotRunner {
         }
         return;
       }
+
+      // UPFRONT mode: all orders already placed — only monitor SL/TP, no crossing logic
+      if (this.config.orderMode === "UPFRONT") return;
 
       const currentLevel = this.computeCurrentLevel(price);
 

@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { BotMode } from './botMode';
+import type { BotOrderMode } from './botOrderMode';
 import type { BotStatus } from './botStatus';
 
 export interface Bot {
@@ -24,6 +25,18 @@ export interface Bot {
   /** Trader's public key (base58), never store private key */
   accountPubkey: string;
   status: BotStatus;
+  /** UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default). */
+  orderMode?: BotOrderMode;
+  /**
+     * Auto-stop price threshold (below for LONG/NEUTRAL, above for SHORT)
+     * @nullable
+     */
+  stopLoss?: number | null;
+  /**
+     * Auto-stop price threshold (above for LONG/NEUTRAL, below for SHORT)
+     * @nullable
+     */
+  takeProfit?: number | null;
   /** @nullable */
   totalPnl?: number | null;
   /** @nullable */

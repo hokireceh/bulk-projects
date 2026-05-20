@@ -308,6 +308,11 @@ components:
         status:
           type: string
           enum: [IDLE, RUNNING, STOPPED, ERROR]
+        orderMode:
+          type: string
+          enum: [UPFRONT, REACTIVE]
+          default: REACTIVE
+          description: "UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default)."
         stopLoss:
           type: ["number", "null"]
           description: Auto-stop price threshold (below for LONG/NEUTRAL, above for SHORT)
@@ -357,6 +362,11 @@ components:
           default: 1
         accountPubkey:
           type: string
+        orderMode:
+          type: string
+          enum: [UPFRONT, REACTIVE]
+          default: REACTIVE
+          description: "UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default)."
         stopLoss:
           type: number
           nullable: true
@@ -384,6 +394,9 @@ components:
           type: number
         leverage:
           type: integer
+        orderMode:
+          type: string
+          enum: [UPFRONT, REACTIVE]
         stopLoss:
           type: number
           nullable: true

@@ -20,6 +20,7 @@ export const HealthCheckResponse = zod.object({
  * @summary List all grid bots
  */
 export const listBotsResponseLeverageDefault = 1;
+export const listBotsResponseOrderModeDefault = `REACTIVE`;
 
 export const ListBotsResponseItem = zod.object({
   "id": zod.number(),
@@ -33,6 +34,9 @@ export const ListBotsResponseItem = zod.object({
   "leverage": zod.number().default(listBotsResponseLeverageDefault),
   "accountPubkey": zod.string().describe('Trader\'s public key (base58), never store private key'),
   "status": zod.enum(['IDLE', 'RUNNING', 'STOPPED', 'ERROR']),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).default(listBotsResponseOrderModeDefault).describe('UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).'),
+  "stopLoss": zod.number().nullish().describe('Auto-stop price threshold (below for LONG\/NEUTRAL, above for SHORT)'),
+  "takeProfit": zod.number().nullish().describe('Auto-stop price threshold (above for LONG\/NEUTRAL, below for SHORT)'),
   "totalPnl": zod.number().nullish(),
   "totalTrades": zod.number().nullish(),
   "createdAt": zod.coerce.date(),
@@ -45,6 +49,7 @@ export const ListBotsResponse = zod.array(ListBotsResponseItem)
  * @summary Create a new grid bot
  */
 export const createBotBodyLeverageDefault = 1;
+export const createBotBodyOrderModeDefault = `REACTIVE`;
 
 export const CreateBotBody = zod.object({
   "name": zod.string(),
@@ -55,7 +60,10 @@ export const CreateBotBody = zod.object({
   "gridCount": zod.number(),
   "investment": zod.number(),
   "leverage": zod.number().default(createBotBodyLeverageDefault),
-  "accountPubkey": zod.string()
+  "accountPubkey": zod.string(),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).default(createBotBodyOrderModeDefault).describe('UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).'),
+  "stopLoss": zod.number().nullish().describe('Auto-stop if price drops below (LONG\/NEUTRAL) or rises above (SHORT) this value'),
+  "takeProfit": zod.number().nullish().describe('Auto-stop if price rises above (LONG\/NEUTRAL) or drops below (SHORT) this value')
 })
 
 
@@ -67,6 +75,7 @@ export const GetBotParams = zod.object({
 })
 
 export const getBotResponseLeverageDefault = 1;
+export const getBotResponseOrderModeDefault = `REACTIVE`;
 
 export const GetBotResponse = zod.object({
   "id": zod.number(),
@@ -80,6 +89,9 @@ export const GetBotResponse = zod.object({
   "leverage": zod.number().default(getBotResponseLeverageDefault),
   "accountPubkey": zod.string().describe('Trader\'s public key (base58), never store private key'),
   "status": zod.enum(['IDLE', 'RUNNING', 'STOPPED', 'ERROR']),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).default(getBotResponseOrderModeDefault).describe('UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).'),
+  "stopLoss": zod.number().nullish().describe('Auto-stop price threshold (below for LONG\/NEUTRAL, above for SHORT)'),
+  "takeProfit": zod.number().nullish().describe('Auto-stop price threshold (above for LONG\/NEUTRAL, below for SHORT)'),
   "totalPnl": zod.number().nullish(),
   "totalTrades": zod.number().nullish(),
   "createdAt": zod.coerce.date(),
@@ -101,10 +113,14 @@ export const UpdateBotBody = zod.object({
   "upperPrice": zod.number().optional(),
   "gridCount": zod.number().optional(),
   "investment": zod.number().optional(),
-  "leverage": zod.number().optional()
+  "leverage": zod.number().optional(),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).optional(),
+  "stopLoss": zod.number().nullish(),
+  "takeProfit": zod.number().nullish()
 })
 
 export const updateBotResponseLeverageDefault = 1;
+export const updateBotResponseOrderModeDefault = `REACTIVE`;
 
 export const UpdateBotResponse = zod.object({
   "id": zod.number(),
@@ -118,6 +134,9 @@ export const UpdateBotResponse = zod.object({
   "leverage": zod.number().default(updateBotResponseLeverageDefault),
   "accountPubkey": zod.string().describe('Trader\'s public key (base58), never store private key'),
   "status": zod.enum(['IDLE', 'RUNNING', 'STOPPED', 'ERROR']),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).default(updateBotResponseOrderModeDefault).describe('UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).'),
+  "stopLoss": zod.number().nullish().describe('Auto-stop price threshold (below for LONG\/NEUTRAL, above for SHORT)'),
+  "takeProfit": zod.number().nullish().describe('Auto-stop price threshold (above for LONG\/NEUTRAL, below for SHORT)'),
   "totalPnl": zod.number().nullish(),
   "totalTrades": zod.number().nullish(),
   "createdAt": zod.coerce.date(),
@@ -141,6 +160,7 @@ export const StartBotParams = zod.object({
 })
 
 export const startBotResponseLeverageDefault = 1;
+export const startBotResponseOrderModeDefault = `REACTIVE`;
 
 export const StartBotResponse = zod.object({
   "id": zod.number(),
@@ -154,6 +174,9 @@ export const StartBotResponse = zod.object({
   "leverage": zod.number().default(startBotResponseLeverageDefault),
   "accountPubkey": zod.string().describe('Trader\'s public key (base58), never store private key'),
   "status": zod.enum(['IDLE', 'RUNNING', 'STOPPED', 'ERROR']),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).default(startBotResponseOrderModeDefault).describe('UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).'),
+  "stopLoss": zod.number().nullish().describe('Auto-stop price threshold (below for LONG\/NEUTRAL, above for SHORT)'),
+  "takeProfit": zod.number().nullish().describe('Auto-stop price threshold (above for LONG\/NEUTRAL, below for SHORT)'),
   "totalPnl": zod.number().nullish(),
   "totalTrades": zod.number().nullish(),
   "createdAt": zod.coerce.date(),
@@ -169,6 +192,7 @@ export const StopBotParams = zod.object({
 })
 
 export const stopBotResponseLeverageDefault = 1;
+export const stopBotResponseOrderModeDefault = `REACTIVE`;
 
 export const StopBotResponse = zod.object({
   "id": zod.number(),
@@ -182,6 +206,9 @@ export const StopBotResponse = zod.object({
   "leverage": zod.number().default(stopBotResponseLeverageDefault),
   "accountPubkey": zod.string().describe('Trader\'s public key (base58), never store private key'),
   "status": zod.enum(['IDLE', 'RUNNING', 'STOPPED', 'ERROR']),
+  "orderMode": zod.enum(['UPFRONT', 'REACTIVE']).default(stopBotResponseOrderModeDefault).describe('UPFRONT: place all grid orders at start. REACTIVE: place orders only when price crosses a level (default).'),
+  "stopLoss": zod.number().nullish().describe('Auto-stop price threshold (below for LONG\/NEUTRAL, above for SHORT)'),
+  "takeProfit": zod.number().nullish().describe('Auto-stop price threshold (above for LONG\/NEUTRAL, below for SHORT)'),
   "totalPnl": zod.number().nullish(),
   "totalTrades": zod.number().nullish(),
   "createdAt": zod.coerce.date(),

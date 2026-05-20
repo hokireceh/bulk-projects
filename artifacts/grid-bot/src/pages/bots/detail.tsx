@@ -196,6 +196,7 @@ export default function BotDetail() {
         privateKey: pk,
         symbol: bot.symbol,
         mode: bot.mode,
+        orderMode: (bot.orderMode ?? "REACTIVE") as "UPFRONT" | "REACTIVE",
         lowerPrice: bot.lowerPrice,
         upperPrice: bot.upperPrice,
         gridCount: bot.gridCount,
