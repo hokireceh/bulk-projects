@@ -1,8 +1,12 @@
 import { sizePerGrid } from "./gridEngine";
 import { buildAndSign, submitTransaction, cancelAllOrders } from "./signing";
+import { getEndpoint } from "./keys";
 
 const PROXY_API = "/api";
-const STAGING_WS = "wss://staging-ws.bulk.trade";
+const WS_URLS: Record<string, string> = {
+  staging:    "wss://staging-ws.bulk.trade",
+  production: "wss://ws.bulk.trade",
+};
 
 const PRICE_POLL_INTERVAL_MS = 5_000;
 const MAX_GRID_ORDERS_PER_CROSSING = 5;
@@ -260,6 +264,7 @@ export class BotRunner {
         account: this.config.accountPubkey,
         symbol: this.config.symbol,
         endpoint: PROXY_API,
+        env: getEndpoint(),
       });
       this.log(cancelled ? "Existing orders cancelled." : "Cancel returned error (may be none open).");
 
@@ -306,7 +311,9 @@ export class BotRunner {
 
   private async fetchMarkPrice(): Promise<number | null> {
     try {
-      const res = await fetch(`${PROXY_API}/markets/${encodeURIComponent(this.config.symbol)}/ticker`);
+      const res = await fetch(`${PROXY_API}/markets/${encodeURIComponent(this.config.symbol)}/ticker`, {
+        headers: { "x-bulk-env": getEndpoint() },
+      });
       if (!res.ok) return null;
       const body = await res.json() as any;
       const p = Number(body.markPrice ?? body.lastPrice ?? 0);
@@ -436,7 +443,7 @@ export class BotRunner {
           this.config.privateKey
         );
 
-        const result = await submitTransaction(tx, PROXY_API);
+        const result = await submitTransaction(tx, PROXY_API, getEndpoint());
         if (result.ok) {
           this.totalTrades++;
           const st = result.statuses?.[0] as any;
@@ -460,7 +467,8 @@ export class BotRunner {
     if (!this.running) return;
     this.log("Connecting WebSocket account stream...");
 
-    this.ws = new WebSocket(STAGING_WS);
+    const wsUrl = WS_URLS[getEndpoint()] ?? WS_URLS.staging;
+    this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
       this.log("WebSocket connected.");
@@ -647,6 +655,7 @@ export class BotRunner {
       account: this.config.accountPubkey,
       symbol: this.config.symbol,
       endpoint: PROXY_API,
+      env: getEndpoint(),
     });
     this.log(cancelled ? "All orders cancelled. Bot stopped." : "Cancel error. Bot stopped.");
     this.onUpdate?.();

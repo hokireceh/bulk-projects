@@ -14,7 +14,7 @@ import { Play, Square, Terminal, Pencil } from "lucide-react";
 import { Link } from "wouter";
 import { allGridLevels } from "@/lib/gridEngine";
 import { BotRunner, type BotConfig, type LogLine, type MarginData, type PositionData, type LiveOrder } from "@/lib/botRunner";
-import { getPrivateKey } from "@/lib/keys";
+import { getPrivateKey, getEndpoint } from "@/lib/keys";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -24,7 +24,7 @@ const PROXY_API = "/api";
 async function fetchAccountData(pubkey: string, type: string): Promise<any[]> {
   const res = await fetch(`${PROXY_API}/account`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-bulk-env": getEndpoint() },
     body: JSON.stringify({ type, user: pubkey }),
   });
   if (!res.ok) return [];

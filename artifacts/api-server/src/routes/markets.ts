@@ -1,24 +1,35 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import {
   GetMarketsResponse,
   GetMarketTickerResponse,
   GetMarketTickerParams,
 } from "@workspace/api-zod";
 
-const BULK_API = "https://staging-api.bulk.trade/api/v1";
+const BULK_STAGING    = "https://staging-api.bulk.trade/api/v1";
+const BULK_PRODUCTION = "https://api.bulk.trade/api/v1";
+
+function bulkApi(req: Request): string {
+  return req.headers["x-bulk-env"] === "production" ? BULK_PRODUCTION : BULK_STAGING;
+}
+
+const BULK_WS_STAGING    = "wss://staging-ws.bulk.trade";
+const BULK_WS_PRODUCTION = "wss://ws.bulk.trade";
+
+export function bulkWsUrl(env: string): string {
+  return env === "production" ? BULK_WS_PRODUCTION : BULK_WS_STAGING;
+}
 
 const router: IRouter = Router();
 
 router.get("/markets", async (req, res): Promise<void> => {
   try {
-    const response = await fetch(`${BULK_API}/exchangeInfo`);
+    const response = await fetch(`${bulkApi(req)}/exchangeInfo`);
     if (!response.ok) {
       req.log.error({ status: response.status }, "Failed to fetch exchange info from bulk.trade");
       res.status(502).json({ error: "Failed to fetch market data" });
       return;
     }
     const data = await response.json() as unknown[];
-    // Map bulk.trade field names to our schema
     const markets = (Array.isArray(data) ? data : []).map((m: any) => ({
       symbol: m.symbol,
       baseAsset: m.baseAsset,
@@ -46,7 +57,7 @@ router.get("/markets/:symbol/ticker", async (req, res): Promise<void> => {
   }
 
   try {
-    const response = await fetch(`${BULK_API}/ticker/${encodeURIComponent(params.data.symbol)}`);
+    const response = await fetch(`${bulkApi(req)}/ticker/${encodeURIComponent(params.data.symbol)}`);
     if (!response.ok) {
       req.log.warn({ symbol: params.data.symbol, status: response.status }, "Failed to fetch ticker");
       res.status(response.status === 404 ? 404 : 502).json({ error: "Failed to fetch ticker" });
@@ -75,7 +86,7 @@ router.get("/markets/:symbol/ticker", async (req, res): Promise<void> => {
 
 router.post("/account", async (req, res): Promise<void> => {
   try {
-    const response = await fetch(`${BULK_API}/account`, {
+    const response = await fetch(`${bulkApi(req)}/account`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body),
@@ -93,10 +104,9 @@ router.post("/account", async (req, res): Promise<void> => {
   }
 });
 
-// Proxy: forward signed transactions to bulk.trade (avoids browser CORS)
 router.post("/order", async (req, res): Promise<void> => {
   try {
-    const response = await fetch(`${BULK_API}/order`, {
+    const response = await fetch(`${bulkApi(req)}/order`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body),

@@ -204,12 +204,13 @@ export function buildAndSign(
 
 export async function submitTransaction(
   tx: SignedTransaction,
-  httpEndpoint: string
+  httpEndpoint: string,
+  env = "staging"
 ): Promise<{ ok: boolean; statuses?: unknown[]; error?: string }> {
   try {
     const res = await fetch(`${httpEndpoint}/order`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-bulk-env": env },
       body: JSON.stringify(tx),
     });
     const body = await res.json() as any;
@@ -231,6 +232,7 @@ export async function placeLimitOrder(opts: {
   price: number;
   size: number;
   endpoint: string;
+  env?: string;
   tif?: "GTC" | "IOC" | "ALO";
   iso?: boolean;
 }): Promise<{ ok: boolean; orderId?: string; error?: string }> {
@@ -239,7 +241,7 @@ export async function placeLimitOrder(opts: {
     opts.account,
     opts.privateKey
   );
-  const result = await submitTransaction(tx, opts.endpoint);
+  const result = await submitTransaction(tx, opts.endpoint, opts.env ?? "staging");
   if (!result.ok) return { ok: false, error: result.error };
   const st = (result.statuses?.[0] as any);
   return { ok: true, orderId: st?.resting?.oid ?? st?.filled?.oid };
@@ -250,13 +252,14 @@ export async function cancelAllOrders(opts: {
   account: string;
   symbol: string;
   endpoint: string;
+  env?: string;
 }): Promise<boolean> {
   const tx = buildAndSign(
     [{ type: "cxa", symbols: [opts.symbol] }],
     opts.account,
     opts.privateKey
   );
-  const result = await submitTransaction(tx, opts.endpoint);
+  const result = await submitTransaction(tx, opts.endpoint, opts.env ?? "staging");
   return result.ok;
 }
 
@@ -264,12 +267,12 @@ export async function requestFaucet(opts: {
   privateKey: string;
   account: string;
   endpoint: string;
+  env?: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  // The faucet action requires `user` (recipient pubkey) both in binary and JSON
   const tx = buildAndSign(
     [{ type: "faucet", user: opts.account }],
     opts.account,
     opts.privateKey
   );
-  return submitTransaction(tx, opts.endpoint);
+  return submitTransaction(tx, opts.endpoint, opts.env ?? "staging");
 }

@@ -57,7 +57,7 @@ export default function Settings() {
     }
     setFaucetLoading(true);
     try {
-      const result = await requestFaucet({ privateKey: savedPk, account: pubkey, endpoint: PROXY_API });
+      const result = await requestFaucet({ privateKey: savedPk, account: pubkey, endpoint: PROXY_API, env: endpoint });
       if (result.ok) {
         toast({ title: "Faucet requested", description: "Testnet funds should arrive shortly." });
       } else {
