@@ -91,6 +91,9 @@ export class BotRunner {
   // Out-of-range log throttle (mirror: extendedBotEngine extOutOfRangeNotifAt)
   private lastOutOfRangeLogAt = 0;
 
+  // Dedup account snapshot logs — only log when balance/pnl actually changes
+  private lastSnapshotKey = "";
+
   // EXT-02: localStorage key for persisting lastLevel across page refreshes
   private stateKey: string;
 
@@ -655,7 +658,11 @@ export class BotRunner {
         .filter((o: any) => o.symbol === this.config.symbol)
         .map((o: any) => this.parseOpenOrder(o));
     }
-    this.log(`Account snapshot: balance=${this.margin?.totalBalance?.toFixed(2) ?? "?"} realizedPnl=${this.margin?.realizedPnl?.toFixed(4) ?? "?"}`);
+    const snapKey = `${this.margin?.totalBalance?.toFixed(2)}|${this.margin?.realizedPnl?.toFixed(4)}`;
+    if (snapKey !== this.lastSnapshotKey) {
+      this.lastSnapshotKey = snapKey;
+      this.log(`[Bot ${this.config.botId}] Account snapshot: balance=${this.margin?.totalBalance?.toFixed(2) ?? "?"} realizedPnl=${this.margin?.realizedPnl?.toFixed(4) ?? "?"}`);
+    }
     this.onUpdate?.();
   }
 
