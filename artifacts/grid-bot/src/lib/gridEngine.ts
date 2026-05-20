@@ -15,6 +15,7 @@ export function calculateGridLevels(lowerPrice: number, upperPrice: number, grid
   return levels;
 }
 
-export function sizePerGrid(investment: number, gridCount: number, price: number) {
-  return (investment / gridCount) / price;
+export function sizePerGrid(investment: number, gridCount: number, price: number, leverage: number) {
+  // investment = total margin to use; notional = investment * leverage
+  return (investment * leverage / gridCount) / price;
 }

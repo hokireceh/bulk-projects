@@ -137,7 +137,7 @@ export class BotRunner {
       let placed = 0;
       for (const level of levels) {
         if (!this.running) break;
-        const size = sizePerGrid(this.config.investment, this.config.gridCount, level.price);
+        const size = sizePerGrid(this.config.investment, this.config.gridCount, level.price, this.config.leverage);
         const isBuy = level.side === "BUY";
 
         const tx = buildAndSign(
@@ -339,7 +339,7 @@ export class BotRunner {
 
     if (!allowed || replenishPrice === filledPrice) return;
 
-    const size = sizePerGrid(this.config.investment, this.config.gridCount, replenishPrice);
+    const size = sizePerGrid(this.config.investment, this.config.gridCount, replenishPrice, this.config.leverage);
     const tx = buildAndSign(
       [{ type: "l", symbol: this.config.symbol, isBuy: replenishIsBuy, price: replenishPrice, size, tif: "GTC", reduceOnly: false, iso: false }],
       this.config.accountPubkey,
