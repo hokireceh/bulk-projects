@@ -93,7 +93,7 @@ export default function EditBot() {
   const queryClient = useQueryClient();
 
   const { data: bot, isLoading } = useGetBot(botId, {
-    query: { enabled: !!botId }
+    query: { enabled: !!botId, queryKey: ["bot", botId] }
   });
 
   const updateBot = useUpdateBot();

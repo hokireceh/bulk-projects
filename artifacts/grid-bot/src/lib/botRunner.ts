@@ -1,4 +1,4 @@
-import { calculateGridLevels, sizePerGrid } from "./gridEngine";
+import { calculateGridLevels, sizePerGrid, snapToGridLevel, allGridLevels } from "./gridEngine";
 import { buildAndSign, submitTransaction, cancelAllOrders } from "./signing";
 
 // All HTTP requests go through our API proxy to avoid browser CORS restrictions.
@@ -141,7 +141,7 @@ export class BotRunner {
         const isBuy = level.side === "BUY";
 
         const tx = buildAndSign(
-          [{ type: "l", symbol: this.config.symbol, isBuy, price: level.price, size, tif: "GTC", reduceOnly: false, iso: false }],
+          [{ type: "l", symbol: this.config.symbol, isBuy, price: level.price, size, tif: "GTC", reduceOnly: false, iso: true }],
           this.config.accountPubkey,
           this.config.privateKey
         );
@@ -324,12 +324,29 @@ export class BotRunner {
 
     if (!this.running) return;
 
-    // Replenish: filled BUY → place SELL one step up; filled SELL → place BUY one step down
-    const step = (this.config.upperPrice - this.config.lowerPrice) / this.config.gridCount;
+    // Replenish: filled BUY → place SELL one step up; filled SELL → place BUY one step down.
+    // Snap fill price to nearest grid level first (avoids floating-point drift accumulation).
+    const snappedFillPrice = snapToGridLevel(
+      filledPrice,
+      this.config.lowerPrice,
+      this.config.upperPrice,
+      this.config.gridCount
+    );
+    const gridLevels = allGridLevels(
+      this.config.lowerPrice,
+      this.config.upperPrice,
+      this.config.gridCount
+    );
+    const fillIdx = gridLevels.findIndex(lvl => Math.abs(lvl - snappedFillPrice) < 0.001);
+    if (fillIdx < 0) {
+      this.log(`↺ Replenish skip: fill price ${filledPrice.toFixed(2)} not on grid`);
+      return;
+    }
+
     const replenishIsBuy = !isBuy;
-    const replenishPrice = replenishIsBuy
-      ? Math.max(filledPrice - step, this.config.lowerPrice)
-      : Math.min(filledPrice + step, this.config.upperPrice);
+    const replenishIdx = replenishIsBuy ? fillIdx - 1 : fillIdx + 1;
+    if (replenishIdx < 0 || replenishIdx >= gridLevels.length) return;
+    const replenishPrice = gridLevels[replenishIdx];
 
     // Mode constraints
     const allowed =
@@ -337,11 +354,11 @@ export class BotRunner {
       (this.config.mode === "LONG"  && replenishIsBuy) ||
       (this.config.mode === "SHORT" && !replenishIsBuy);
 
-    if (!allowed || replenishPrice === filledPrice) return;
+    if (!allowed) return;
 
     const size = sizePerGrid(this.config.investment, this.config.gridCount, replenishPrice, this.config.leverage);
     const tx = buildAndSign(
-      [{ type: "l", symbol: this.config.symbol, isBuy: replenishIsBuy, price: replenishPrice, size, tif: "GTC", reduceOnly: false, iso: false }],
+      [{ type: "l", symbol: this.config.symbol, isBuy: replenishIsBuy, price: replenishPrice, size, tif: "GTC", reduceOnly: false, iso: true }],
       this.config.accountPubkey,
       this.config.privateKey
     );
