@@ -660,10 +660,10 @@ export class BotRunner {
         .filter((o: any) => o.symbol === this.config.symbol)
         .map((o: any) => this.parseOpenOrder(o));
     }
-    const snapKey = `${this.margin?.totalBalance?.toFixed(2)}|${this.margin?.realizedPnl?.toFixed(4)}`;
+    const snapKey = `${this.margin?.totalBalance?.toFixed(2)}`;
     if (snapKey !== this.lastSnapshotKey) {
       this.lastSnapshotKey = snapKey;
-      this.log(`[Bot ${this.config.botId}] Account snapshot: balance=${this.margin?.totalBalance?.toFixed(2) ?? "?"} realizedPnl=${this.margin?.realizedPnl?.toFixed(4) ?? "?"}`);
+      this.log(`[Bot ${this.config.botId}] Account snapshot: balance=${this.margin?.totalBalance?.toFixed(2) ?? "?"} sessionPnl=${this.sessionPnl >= 0 ? "+" : ""}${this.sessionPnl.toFixed(4)}`);
     }
     this.onUpdate?.();
   }
