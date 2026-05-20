@@ -21,6 +21,43 @@ export interface BotConfig {
 
 export type LogLine = { ts: number; msg: string };
 
+export interface MarginData {
+  totalBalance: number;
+  availableBalance: number;
+  marginUsed: number;
+  notional: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  fees: number;
+  funding: number;
+}
+
+export interface PositionData {
+  symbol: string;
+  size: number;
+  price: number;
+  fairPrice: number;
+  notional: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  leverage: number;
+  liquidationPrice: number;
+  fees: number;
+  funding: number;
+}
+
+export interface LiveOrder {
+  orderId: string;
+  symbol: string;
+  price: number;
+  originalSize: number;
+  size: number;
+  filledSize: number;
+  isBuy: boolean;
+  status: string;
+  timestamp: number;
+}
+
 export class BotRunner {
   private running = false;
   private ws: WebSocket | null = null;
@@ -28,6 +65,12 @@ export class BotRunner {
   public logs: LogLine[] = [];
   private onUpdate?: () => void;
   private storageKey: string;
+
+  // Live data from bulk.trade account stream (not DB)
+  public margin: MarginData | null = null;
+  public position: PositionData | null = null;
+  public openOrders: LiveOrder[] = [];
+  public totalTrades = 0;
 
   constructor(
     private config: BotConfig,
@@ -162,22 +205,128 @@ export class BotRunner {
     };
   }
 
+  // Bulk.trade WS account stream format:
+  // { type: "account", data: { type: "accountSnapshot"|"marginUpdate"|"positionUpdate"|"orderUpdate"|"fill"|..., ... } }
   private handleWsMessage(msg: any) {
-    // Account stream fill event — replenish the grid
-    const fill = msg.fills ?? (msg.type === "fill" ? msg : null);
-    if (!fill) return;
-    if (fill.symbol !== this.config.symbol) return;
+    if (msg.type === "subscriptionResponse") return;
+    if (msg.type !== "account") return;
 
-    const filledPrice = Number(fill.price);
-    const filledSize  = Number(fill.amount);
-    const wasBuy      = Boolean(fill.isBuy);
-    this.log(`Fill: ${wasBuy ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)}`);
+    const data = msg.data;
+    if (!data?.type) return;
+
+    switch (data.type) {
+      case "accountSnapshot":
+        this.handleSnapshot(data);
+        break;
+      case "marginUpdate":
+        this.handleMarginUpdate(data);
+        break;
+      case "positionUpdate":
+        this.handlePositionUpdate(data);
+        break;
+      case "orderUpdate":
+        this.handleOrderUpdate(data);
+        break;
+      case "fill":
+        this.handleFill(data);
+        break;
+    }
+  }
+
+  private handleSnapshot(data: any) {
+    if (data.margin) {
+      this.margin = {
+        totalBalance:     Number(data.margin.totalBalance     ?? 0),
+        availableBalance: Number(data.margin.availableBalance ?? 0),
+        marginUsed:       Number(data.margin.marginUsed       ?? 0),
+        notional:         Number(data.margin.notional         ?? 0),
+        realizedPnl:      Number(data.margin.realizedPnl      ?? 0),
+        unrealizedPnl:    Number(data.margin.unrealizedPnl    ?? 0),
+        fees:             Number(data.margin.fees             ?? 0),
+        funding:          Number(data.margin.funding          ?? 0),
+      };
+    }
+    if (Array.isArray(data.positions)) {
+      const pos = data.positions.find((p: any) => p.symbol === this.config.symbol);
+      if (pos) this.position = this.parsePosition(pos);
+    }
+    if (Array.isArray(data.openOrders)) {
+      this.openOrders = data.openOrders
+        .filter((o: any) => o.symbol === this.config.symbol)
+        .map((o: any) => this.parseOpenOrder(o));
+    }
+    this.log(`Account snapshot: balance=${this.margin?.totalBalance?.toFixed(2) ?? "?"} realizedPnl=${this.margin?.realizedPnl?.toFixed(4) ?? "?"}`);
+    this.onUpdate?.();
+  }
+
+  private handleMarginUpdate(data: any) {
+    this.margin = {
+      totalBalance:     Number(data.totalBalance     ?? this.margin?.totalBalance     ?? 0),
+      availableBalance: Number(data.availableBalance ?? this.margin?.availableBalance ?? 0),
+      marginUsed:       Number(data.marginUsed       ?? this.margin?.marginUsed       ?? 0),
+      notional:         Number(data.notional         ?? this.margin?.notional         ?? 0),
+      realizedPnl:      Number(data.realizedPnl      ?? this.margin?.realizedPnl      ?? 0),
+      unrealizedPnl:    Number(data.unrealizedPnl    ?? this.margin?.unrealizedPnl    ?? 0),
+      fees:             Number(data.fees             ?? this.margin?.fees             ?? 0),
+      funding:          Number(data.funding          ?? this.margin?.funding          ?? 0),
+    };
+    this.onUpdate?.();
+  }
+
+  private handlePositionUpdate(data: any) {
+    if (data.symbol !== this.config.symbol) return;
+    this.position = this.parsePosition(data);
+    this.onUpdate?.();
+  }
+
+  private handleOrderUpdate(data: any) {
+    if (data.sym !== this.config.symbol) return;
+    const isBuy = (data.origSz ?? 0) > 0;
+    const terminal = ["filled","partiallyFilled","cancelled","cancelledRiskLimit",
+                      "cancelledSelfCrossing","cancelledReduceOnly","cancelledIoc",
+                      "rejectedInvalid","rejectedRiskLimit","rejectedCrossing","rejectedDuplicate",
+                      "siblingCancelled","triggerFailed"].includes(data.status);
+
+    if (terminal) {
+      this.openOrders = this.openOrders.filter(o => o.orderId !== data.oid);
+    } else {
+      const existing = this.openOrders.findIndex(o => o.orderId === data.oid);
+      const order: LiveOrder = {
+        orderId:      data.oid,
+        symbol:       data.sym,
+        price:        Number(data.px     ?? 0),
+        originalSize: Math.abs(Number(data.origSz ?? 0)),
+        size:         Math.abs(Number(data.sz     ?? 0)),
+        filledSize:   Number(data.fillSz ?? 0),
+        isBuy,
+        status:       data.status,
+        timestamp:    Number(data.ts ?? 0),
+      };
+      if (existing >= 0) {
+        this.openOrders[existing] = order;
+      } else {
+        this.openOrders.push(order);
+      }
+    }
+    this.onUpdate?.();
+  }
+
+  private handleFill(data: any) {
+    if (data.symbol !== this.config.symbol) return;
+
+    const filledPrice = Number(data.price);
+    const filledSize  = Number(data.size);
+    const isBuy       = Boolean(data.isBuy);
+    const fee         = Number(data.fee ?? 0);
+
+    this.totalTrades++;
+    this.log(`Fill #${this.totalTrades}: ${isBuy ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)} fee=${fee.toFixed(4)}`);
 
     if (!this.running) return;
 
     // Replenish: filled BUY → place SELL one step up; filled SELL → place BUY one step down
     const step = (this.config.upperPrice - this.config.lowerPrice) / this.config.gridCount;
-    const replenishIsBuy = !wasBuy;
+    const replenishIsBuy = !isBuy;
     const replenishPrice = replenishIsBuy
       ? Math.max(filledPrice - step, this.config.lowerPrice)
       : Math.min(filledPrice + step, this.config.upperPrice);
@@ -205,6 +354,37 @@ export class BotRunner {
     });
   }
 
+  private parsePosition(p: any): PositionData {
+    return {
+      symbol:           String(p.symbol ?? ""),
+      size:             Number(p.size             ?? 0),
+      price:            Number(p.price            ?? 0),
+      fairPrice:        Number(p.fairPrice        ?? 0),
+      notional:         Number(p.notional         ?? 0),
+      realizedPnl:      Number(p.realizedPnl      ?? 0),
+      unrealizedPnl:    Number(p.unrealizedPnl    ?? 0),
+      leverage:         Number(p.leverage         ?? 0),
+      liquidationPrice: Number(p.liquidationPrice ?? 0),
+      fees:             Number(p.fees             ?? 0),
+      funding:          Number(p.funding          ?? 0),
+    };
+  }
+
+  private parseOpenOrder(o: any): LiveOrder {
+    const origSz = Number(o.originalSize ?? o.origSz ?? 0);
+    return {
+      orderId:      String(o.orderId ?? o.oid ?? ""),
+      symbol:       String(o.symbol ?? o.sym ?? ""),
+      price:        Number(o.price ?? o.px ?? 0),
+      originalSize: Math.abs(origSz),
+      size:         Math.abs(Number(o.size ?? o.sz ?? 0)),
+      filledSize:   Number(o.filledSize ?? o.fillSz ?? 0),
+      isBuy:        origSz > 0,
+      status:       String(o.status ?? ""),
+      timestamp:    Number(o.timestamp ?? o.ts ?? 0),
+    };
+  }
+
   // ── Stop ────────────────────────────────────────────────────────────────────
 
   async stop(): Promise<void> {
@@ -227,4 +407,3 @@ export class BotRunner {
     this.onUpdate?.();
   }
 }
-

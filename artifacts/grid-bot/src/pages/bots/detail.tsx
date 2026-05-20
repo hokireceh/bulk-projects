@@ -1,7 +1,7 @@
 import { Layout } from "@/components/layout";
 import {
   useGetBot, useStartBot, useStopBot,
-  getGetBotQueryKey, useGetBotOrders, getListBotsQueryKey,
+  getGetBotQueryKey, getListBotsQueryKey,
   useGetMarketTicker, getGetMarketTickerQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -12,10 +12,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Play, Square, Terminal } from "lucide-react";
 import { calculateGridLevels, sizePerGrid } from "@/lib/gridEngine";
-import { BotRunner, type BotConfig, type LogLine } from "@/lib/botRunner";
+import { BotRunner, type BotConfig, type LogLine, type MarginData, type PositionData, type LiveOrder } from "@/lib/botRunner";
 import { getPrivateKey } from "@/lib/keys";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+
+const PROXY_API = "/api";
+
+// Fetch account data directly from bulk.trade (via our proxy)
+async function fetchAccountData(pubkey: string, type: string): Promise<any[]> {
+  const res = await fetch(`${PROXY_API}/account`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, user: pubkey }),
+  });
+  if (!res.ok) return [];
+  return res.json();
+}
 
 export default function BotDetail() {
   const { id } = useParams<{ id: string }>();
@@ -27,12 +40,14 @@ export default function BotDetail() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
+  // Live data from bulk.trade — NOT from DB
+  const [margin, setMargin] = useState<MarginData | null>(null);
+  const [position, setPosition] = useState<PositionData | null>(null);
+  const [liveOrders, setLiveOrders] = useState<LiveOrder[]>([]);
+  const [totalTrades, setTotalTrades] = useState(0);
+
   const { data: bot, isLoading } = useGetBot(botId, {
     query: { enabled: !!botId, queryKey: getGetBotQueryKey(botId), refetchInterval: 5000 }
-  });
-
-  const { data: orders } = useGetBotOrders(botId, {
-    query: { enabled: !!botId, queryKey: ["orders", botId], refetchInterval: bot?.status === "RUNNING" ? 5000 : false }
   });
 
   const { data: ticker } = useGetMarketTicker(bot?.symbol ?? "", {
@@ -54,7 +69,18 @@ export default function BotDetail() {
     ? calculateGridLevels(bot.lowerPrice, bot.upperPrice, bot.gridCount, bot.mode, priceForGrid)
     : [];
 
-  // Load persisted logs from localStorage when bot page opens
+  // Sync live data from runner on every update
+  const syncFromRunner = useCallback(() => {
+    const r = runnerRef.current;
+    if (!r) return;
+    setLogs([...r.logs]);
+    if (r.margin)   setMargin({ ...r.margin });
+    if (r.position) setPosition({ ...r.position });
+    setLiveOrders([...r.openOrders]);
+    setTotalTrades(r.totalTrades);
+  }, []);
+
+  // On page load: restore logs + fetch live account data from bulk.trade
   useEffect(() => {
     if (!botId) return;
     try {
@@ -62,6 +88,62 @@ export default function BotDetail() {
       if (saved) setLogs(JSON.parse(saved) as LogLine[]);
     } catch { /* ignore */ }
   }, [botId]);
+
+  // Fetch account snapshot (margin + positions + open orders) from bulk.trade on mount
+  useEffect(() => {
+    if (!bot?.accountPubkey) return;
+    fetchAccountData(bot.accountPubkey, "fullAccount").then((rows) => {
+      const acct = rows[0]?.fullAccount;
+      if (!acct) return;
+      if (acct.margin) {
+        setMargin({
+          totalBalance:     Number(acct.margin.totalBalance     ?? 0),
+          availableBalance: Number(acct.margin.availableBalance ?? 0),
+          marginUsed:       Number(acct.margin.marginUsed       ?? 0),
+          notional:         Number(acct.margin.notional         ?? 0),
+          realizedPnl:      Number(acct.margin.realizedPnl      ?? 0),
+          unrealizedPnl:    Number(acct.margin.unrealizedPnl    ?? 0),
+          fees:             Number(acct.margin.fees             ?? 0),
+          funding:          Number(acct.margin.funding          ?? 0),
+        });
+      }
+      if (Array.isArray(acct.positions)) {
+        const pos = acct.positions.find((p: any) => p.symbol === bot.symbol);
+        if (pos) {
+          setPosition({
+            symbol:           String(pos.symbol),
+            size:             Number(pos.size             ?? 0),
+            price:            Number(pos.price            ?? 0),
+            fairPrice:        Number(pos.fairPrice        ?? 0),
+            notional:         Number(pos.notional         ?? 0),
+            realizedPnl:      Number(pos.realizedPnl      ?? 0),
+            unrealizedPnl:    Number(pos.unrealizedPnl    ?? 0),
+            leverage:         Number(pos.leverage         ?? 0),
+            liquidationPrice: Number(pos.liquidationPrice ?? 0),
+            fees:             Number(pos.fees             ?? 0),
+            funding:          Number(pos.funding          ?? 0),
+          });
+        }
+      }
+      if (Array.isArray(acct.openOrders)) {
+        setLiveOrders(
+          acct.openOrders
+            .filter((o: any) => o.symbol === bot.symbol)
+            .map((o: any) => ({
+              orderId:      String(o.orderId ?? ""),
+              symbol:       String(o.symbol  ?? ""),
+              price:        Number(o.price   ?? 0),
+              originalSize: Number(o.originalSize ?? 0),
+              size:         Number(o.size    ?? 0),
+              filledSize:   Number(o.filledSize   ?? 0),
+              isBuy:        Number(o.originalSize ?? 0) > 0,
+              status:       String(o.status  ?? ""),
+              timestamp:    Number(o.timestamp    ?? 0),
+            }))
+        );
+      }
+    }).catch(() => { /* ignore */ });
+  }, [bot?.accountPubkey, bot?.symbol]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -111,10 +193,10 @@ export default function BotDetail() {
         investment: bot.investment,
         leverage: bot.leverage ?? 1,
       },
-      () => setLogs([...runner.logs])
+      syncFromRunner
     );
     runnerRef.current = runner;
-    setLogs([...runner.logs]); // sync any restored logs immediately
+    setLogs([...runner.logs]); // sync restored logs immediately
     runner.start();
   };
 
@@ -143,6 +225,13 @@ export default function BotDetail() {
       default:        return "bg-gray-500/10 text-gray-500 border-gray-500/20";
     }
   };
+
+  // Compute displayed P&L: prefer position-level (symbol-specific), fall back to account margin
+  const displayedRealizedPnl   = position?.realizedPnl   ?? margin?.realizedPnl   ?? null;
+  const displayedUnrealizedPnl = position?.unrealizedPnl ?? margin?.unrealizedPnl ?? null;
+  const totalPnl = displayedRealizedPnl !== null
+    ? displayedRealizedPnl + (displayedUnrealizedPnl ?? 0)
+    : null;
 
   if (isLoading || !bot) return <Layout><div className="p-8">Loading...</div></Layout>;
 
@@ -227,34 +316,59 @@ export default function BotDetail() {
           <div className="col-span-2 space-y-4">
             {/* Stats row */}
             <div className="grid grid-cols-3 gap-4">
+              {/* Total P&L from bulk.trade */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Total P&L</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className={`text-2xl font-bold ${(bot.totalPnl ?? 0) >= 0 ? "text-green-500" : "text-red-500"}`}>
-                    {(bot.totalPnl ?? 0) >= 0 ? "+" : ""}${(bot.totalPnl ?? 0).toFixed(2)}
-                  </div>
+                  {totalPnl !== null ? (
+                    <div className={`text-2xl font-bold ${totalPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(4)}
+                    </div>
+                  ) : (
+                    <div className="text-2xl font-bold text-muted-foreground">—</div>
+                  )}
+                  {displayedRealizedPnl !== null && displayedUnrealizedPnl !== null && (
+                    <div className="text-[10px] text-muted-foreground mt-1 space-x-2">
+                      <span>Real: <span className={displayedRealizedPnl >= 0 ? "text-green-400" : "text-red-400"}>${displayedRealizedPnl.toFixed(4)}</span></span>
+                      <span>Unreal: <span className={displayedUnrealizedPnl >= 0 ? "text-green-400" : "text-red-400"}>${displayedUnrealizedPnl.toFixed(4)}</span></span>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
+
+              {/* Fills count from WS stream */}
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Trades</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Fills (session)</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{bot.totalTrades ?? 0}</div>
+                  <div className="text-2xl font-bold">{totalTrades}</div>
+                  {position && Math.abs(position.size) > 0 && (
+                    <div className="text-[10px] text-muted-foreground mt-1">
+                      Position: {position.size > 0 ? "+" : ""}{position.size.toFixed(6)}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
+
+              {/* Account balance from bulk.trade */}
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Size / Grid</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Balance</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold tabular-nums">
-                    {priceForGrid > 0
-                      ? sizePerGrid(bot.investment, bot.gridCount, priceForGrid).toFixed(5)
-                      : "—"}
-                  </div>
+                  {margin ? (
+                    <>
+                      <div className="text-2xl font-bold tabular-nums">${margin.totalBalance.toFixed(2)}</div>
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        Avail: ${margin.availableBalance.toFixed(2)}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-2xl font-bold text-muted-foreground">—</div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -283,10 +397,13 @@ export default function BotDetail() {
               </CardContent>
             </Card>
 
-            {/* Orders Table */}
+            {/* Live Open Orders from bulk.trade */}
             <Card>
               <CardHeader>
-                <CardTitle>Orders</CardTitle>
+                <CardTitle className="flex items-center justify-between">
+                  <span>Open Orders</span>
+                  <span className="text-xs font-normal text-muted-foreground">via bulk.trade API</span>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
@@ -295,39 +412,41 @@ export default function BotDetail() {
                       <TableHead>Side</TableHead>
                       <TableHead>Price</TableHead>
                       <TableHead>Size</TableHead>
+                      <TableHead>Filled</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead>Time</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {!orders || orders.length === 0 ? (
+                    {liveOrders.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
-                          No orders yet.
+                          No open orders for {bot.symbol}.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      orders.map(order => (
-                        <TableRow key={order.id}>
-                          <TableCell className={order.side === "BUY" ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
-                            {order.side}
-                          </TableCell>
-                          <TableCell className="font-mono tabular-nums">{order.price}</TableCell>
-                          <TableCell className="font-mono tabular-nums">{order.size}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={
-                              order.status === "FILLED"    ? "border-green-500 text-green-500" :
-                              order.status === "OPEN"      ? "border-blue-500 text-blue-500"   :
-                              order.status === "CANCELLED" ? "border-gray-500 text-gray-500"   : ""
-                            }>
-                              {order.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {new Date(order.createdAt).toLocaleTimeString()}
-                          </TableCell>
-                        </TableRow>
-                      ))
+                      [...liveOrders]
+                        .sort((a, b) => b.price - a.price)
+                        .map(order => (
+                          <TableRow key={order.orderId}>
+                            <TableCell className={order.isBuy ? "text-green-500 font-bold" : "text-red-500 font-bold"}>
+                              {order.isBuy ? "BUY" : "SELL"}
+                            </TableCell>
+                            <TableCell className="font-mono tabular-nums">{order.price.toFixed(2)}</TableCell>
+                            <TableCell className="font-mono tabular-nums">{order.originalSize.toFixed(6)}</TableCell>
+                            <TableCell className="font-mono tabular-nums">{order.filledSize.toFixed(6)}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={
+                                order.status === "filled"   ? "border-green-500 text-green-500" :
+                                order.status === "resting"  ? "border-blue-500 text-blue-500"   :
+                                order.status === "placed"   ? "border-blue-400 text-blue-400"   :
+                                order.status === "working"  ? "border-yellow-500 text-yellow-500" :
+                                "border-gray-500 text-gray-500"
+                              }>
+                                {order.status}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))
                     )}
                   </TableBody>
                 </Table>
