@@ -6,7 +6,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useState, useEffect, useCallback } from "react";
-import { getPrivateKey, derivePublicKey } from "@/lib/keys";
+import { getPrivateKey, derivePublicKey, getEndpoint } from "@/lib/keys";
 
 interface AccountMargin {
   totalBalance: number;
@@ -20,7 +20,7 @@ async function fetchAccountBalance(pubkey: string): Promise<AccountMargin | null
   try {
     const res = await fetch("/api/account", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-bulk-env": getEndpoint() },
       body: JSON.stringify({ type: "fullAccount", user: pubkey }),
     });
     if (!res.ok) return null;
