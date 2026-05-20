@@ -3,20 +3,23 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Bulk Trade Grid Bot API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: bots
+    description: Grid bot management
+  - name: market
+    description: Market data proxy
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +27,232 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /bots:
+    get:
+      operationId: listBots
+      tags: [bots]
+      summary: List all grid bots
+      responses:
+        "200":
+          description: List of bots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bot"
+    post:
+      operationId: createBot
+      tags: [bots]
+      summary: Create a new grid bot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotInput"
+      responses:
+        "201":
+          description: Created bot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bot"
+
+  /bots/{id}:
+    get:
+      operationId: getBot
+      tags: [bots]
+      summary: Get a grid bot by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bot"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateBot
+      tags: [bots]
+      summary: Update a grid bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotUpdate"
+      responses:
+        "200":
+          description: Updated bot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bot"
+    delete:
+      operationId: deleteBot
+      tags: [bots]
+      summary: Delete a grid bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /bots/{id}/start:
+    post:
+      operationId: startBot
+      tags: [bots]
+      summary: Start a grid bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bot"
+
+  /bots/{id}/stop:
+    post:
+      operationId: stopBot
+      tags: [bots]
+      summary: Stop a grid bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bot"
+
+  /bots/{id}/orders:
+    get:
+      operationId: getBotOrders
+      tags: [bots]
+      summary: Get orders placed by a bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of bot orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BotOrder"
+
+    post:
+      operationId: addBotOrder
+      tags: [bots]
+      summary: Log an order placed by the bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BotOrderInput"
+      responses:
+        "201":
+          description: Order logged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotOrder"
+
+  /bots/{id}/stats:
+    get:
+      operationId: getBotStats
+      tags: [bots]
+      summary: Get P&L and performance stats for a bot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bot statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BotStats"
+
+  /markets:
+    get:
+      operationId: getMarkets
+      tags: [market]
+      summary: Get available markets from bulk.trade
+      responses:
+        "200":
+          description: Available markets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Market"
+
+  /markets/{symbol}/ticker:
+    get:
+      operationId: getMarketTicker
+      tags: [market]
+      summary: Get 24h ticker for a symbol
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ticker data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticker"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +263,260 @@ components:
       required:
         - status
 
+    Bot:
+      type: object
+      required:
+        - id
+        - name
+        - symbol
+        - mode
+        - lowerPrice
+        - upperPrice
+        - gridCount
+        - investment
+        - accountPubkey
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        symbol:
+          type: string
+          description: e.g. BTC-USD
+        mode:
+          type: string
+          enum: [LONG, SHORT, NEUTRAL]
+        lowerPrice:
+          type: number
+        upperPrice:
+          type: number
+        gridCount:
+          type: integer
+          description: Number of grid levels
+        investment:
+          type: number
+          description: Total USDC investment amount
+        leverage:
+          type: integer
+          default: 1
+        accountPubkey:
+          type: string
+          description: Trader's public key (base58), never store private key
+        status:
+          type: string
+          enum: [IDLE, RUNNING, STOPPED, ERROR]
+        totalPnl:
+          type: ["number", "null"]
+        totalTrades:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BotInput:
+      type: object
+      required:
+        - name
+        - symbol
+        - mode
+        - lowerPrice
+        - upperPrice
+        - gridCount
+        - investment
+        - accountPubkey
+      properties:
+        name:
+          type: string
+        symbol:
+          type: string
+        mode:
+          type: string
+          enum: [LONG, SHORT, NEUTRAL]
+        lowerPrice:
+          type: number
+        upperPrice:
+          type: number
+        gridCount:
+          type: integer
+        investment:
+          type: number
+        leverage:
+          type: integer
+          default: 1
+        accountPubkey:
+          type: string
+
+    BotUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [LONG, SHORT, NEUTRAL]
+        lowerPrice:
+          type: number
+        upperPrice:
+          type: number
+        gridCount:
+          type: integer
+        investment:
+          type: number
+        leverage:
+          type: integer
+
+    BotOrder:
+      type: object
+      required:
+        - id
+        - botId
+        - orderId
+        - side
+        - price
+        - size
+        - status
+        - createdAt
+      properties:
+        id:
+          type: integer
+        botId:
+          type: integer
+        orderId:
+          type: string
+          description: Bulk trade order ID (base58)
+        side:
+          type: string
+          enum: [BUY, SELL]
+        price:
+          type: number
+        size:
+          type: number
+        status:
+          type: string
+          enum: [OPEN, FILLED, CANCELLED]
+        pnl:
+          type: ["number", "null"]
+        filledAt:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    BotOrderInput:
+      type: object
+      required:
+        - orderId
+        - side
+        - price
+        - size
+        - status
+      properties:
+        orderId:
+          type: string
+        side:
+          type: string
+          enum: [BUY, SELL]
+        price:
+          type: number
+        size:
+          type: number
+        status:
+          type: string
+          enum: [OPEN, FILLED, CANCELLED]
+        pnl:
+          type: number
+
+    BotStats:
+      type: object
+      required:
+        - botId
+        - totalPnl
+        - realizedPnl
+        - unrealizedPnl
+        - totalTrades
+        - totalOrders
+        - openOrders
+      properties:
+        botId:
+          type: integer
+        totalPnl:
+          type: number
+        realizedPnl:
+          type: number
+        unrealizedPnl:
+          type: number
+        totalTrades:
+          type: integer
+        totalOrders:
+          type: integer
+        openOrders:
+          type: integer
+
+    Market:
+      type: object
+      required:
+        - symbol
+        - baseAsset
+        - quoteAsset
+        - status
+        - tickSize
+        - lotSize
+        - maxLeverage
+      properties:
+        symbol:
+          type: string
+        baseAsset:
+          type: string
+        quoteAsset:
+          type: string
+        status:
+          type: string
+        tickSize:
+          type: number
+        lotSize:
+          type: number
+        minNotional:
+          type: number
+        maxLeverage:
+          type: integer
+        pricePrecision:
+          type: integer
+        sizePrecision:
+          type: integer
+
+    Ticker:
+      type: object
+      required:
+        - symbol
+        - lastPrice
+        - markPrice
+      properties:
+        symbol:
+          type: string
+        lastPrice:
+          type: number
+        priceChange:
+          type: number
+        priceChangePercent:
+          type: number
+        highPrice:
+          type: number
+        lowPrice:
+          type: number
+        volume:
+          type: number
+        markPrice:
+          type: number
+        oraclePrice:
+          type: number
+        openInterest:
+          type: number
+        fundingRate:
+          type: number
