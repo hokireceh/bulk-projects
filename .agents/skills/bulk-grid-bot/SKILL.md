@@ -1,183 +1,183 @@
 ---
 name: bulk-grid-bot
-description: Audit checklist, first-run setup, and full project knowledge for the Bulk Grid Trading Bot. Use when starting a new session on this project, auditing code, debugging trading issues, or adding features.
+description: Daftar periksa audit, setup awal, dan pengetahuan lengkap proyek untuk Bulk Grid Trading Bot. Gunakan saat memulai sesi baru, mengaudit kode, men-debug masalah trading, atau menambahkan fitur.
 ---
 
-# Bulk Grid Trading Bot — Agent Knowledge Base
+# Bulk Grid Trading Bot — Basis Pengetahuan Agen
 
-## Quick First-Run Checklist
+## Daftar Periksa Awal (Sebelum Menyentuh Kode)
 
-When opening this project fresh, run through this before touching any code:
+Jalankan ini setiap kali membuka proyek dari awal:
 
 ```bash
-# 1. Verify DB is provisioned
+# 1. Verifikasi DB sudah tersedia
 pnpm --filter @workspace/db run push
 
-# 2. Confirm both workflows are running
+# 2. Pastikan kedua workflow berjalan
 # - artifacts/api-server: API Server  → port 8080
 # - artifacts/grid-bot: web           → port 24830
 
-# 3. Typecheck everything
+# 3. Typecheck semua paket
 pnpm run typecheck
 ```
 
-If `DATABASE_URL` is missing, it is auto-provisioned by Replit — go to the Database tab to create a PostgreSQL instance.
+Jika `DATABASE_URL` tidak ada, Replit akan menyediakannya secara otomatis — buka tab Database untuk membuat instance PostgreSQL.
 
 ---
 
-## Architecture
+## Arsitektur
 
 ```
 Browser (React + Vite, port 24830)
   │
-  ├─ Private key: ONLY in localStorage("bulk_private_key") — NEVER sent to backend
-  ├─ Signs orders client-side (Ed25519 via tweetnacl)
-  ├─ Places orders via WebSocket + REST → /api/* proxy
+  ├─ Private key: HANYA di localStorage("bulk_private_key") — JANGAN dikirim ke backend
+  ├─ Menandatangani order di sisi klien (Ed25519 via tweetnacl)
+  ├─ Menempatkan order via WebSocket + REST → proxy /api/*
   │
   └─ API Server (Express 5, port 8080)
-       ├─ /api/bots          CRUD for bot configs (PostgreSQL via Drizzle)
+       ├─ /api/bots          CRUD konfigurasi bot (PostgreSQL via Drizzle)
        ├─ /api/markets/*     Proxy → https://staging-api.bulk.trade/api/v1
-       ├─ /api/order         Proxy → bulk.trade order submission
-       ├─ /api/cancel        Proxy → bulk.trade cancel
-       └─ /api/account       Proxy → bulk.trade account data
+       ├─ /api/order         Proxy → pengiriman order bulk.trade
+       ├─ /api/cancel        Proxy → pembatalan bulk.trade
+       └─ /api/account       Proxy → data akun bulk.trade
 ```
 
-**Key constraint**: Order signing and placement is entirely client-side. The backend only stores config/state. Never move signing logic to the server.
+**Batasan utama**: Penandatanganan dan penempatan order sepenuhnya di sisi klien. Backend hanya menyimpan konfigurasi/status. Jangan pernah memindahkan logika penandatanganan ke server.
 
 ---
 
-## Critical File Map
+## Peta File Kritis
 
-| File | Purpose |
-|------|---------|
-| `lib/api-spec/openapi.yaml` | API contract — source of truth. Edit here, then run codegen |
-| `lib/db/src/schema/bots.ts` | DB schema: `bots`, `bot_orders` tables |
-| `artifacts/api-server/src/routes/bots.ts` | Bot CRUD + start/stop/stats routes |
-| `artifacts/api-server/src/routes/markets.ts` | Exchange info + ticker proxy |
-| `artifacts/grid-bot/src/lib/gridEngine.ts` | Grid level calculation (LONG/SHORT/NEUTRAL) |
-| `artifacts/grid-bot/src/lib/botRunner.ts` | Bot lifecycle: place orders, WS fills, replenish |
-| `artifacts/grid-bot/src/lib/signing.ts` | Ed25519 signing (binary + JSON encoding) |
-| `artifacts/grid-bot/src/lib/keys.ts` | Derive pubkey from private key (tweetnacl) |
-| `artifacts/grid-bot/src/pages/bots/create.tsx` | Create bot form |
-| `artifacts/grid-bot/src/pages/bots/edit.tsx` | Edit bot form |
-| `artifacts/grid-bot/src/pages/bots/detail.tsx` | Bot detail + grid visualization + start/stop |
-| `artifacts/grid-bot/src/pages/logs.tsx` | Real-time trading logs per bot (replaces markets page) |
-| `artifacts/grid-bot/src/pages/dashboard.tsx` | Dashboard with session P&L from fills |
+| File | Tujuan |
+|------|--------|
+| `lib/api-spec/openapi.yaml` | Kontrak API — sumber kebenaran. Edit di sini, lalu jalankan codegen |
+| `lib/db/src/schema/bots.ts` | Skema DB: tabel `bots`, `bot_orders` |
+| `artifacts/api-server/src/routes/bots.ts` | CRUD bot + route start/stop/stats |
+| `artifacts/api-server/src/routes/markets.ts` | Proxy info exchange + ticker |
+| `artifacts/grid-bot/src/lib/gridEngine.ts` | Kalkulasi level grid (LONG/SHORT/NEUTRAL) |
+| `artifacts/grid-bot/src/lib/botRunner.ts` | Siklus hidup bot: tempatkan order, fill WS, isi ulang |
+| `artifacts/grid-bot/src/lib/signing.ts` | Penandatanganan Ed25519 (encoding binary + JSON) |
+| `artifacts/grid-bot/src/lib/keys.ts` | Turunkan pubkey dari private key (tweetnacl) |
+| `artifacts/grid-bot/src/pages/bots/create.tsx` | Form buat bot |
+| `artifacts/grid-bot/src/pages/bots/edit.tsx` | Form edit bot |
+| `artifacts/grid-bot/src/pages/bots/detail.tsx` | Detail bot + visualisasi grid + start/stop |
+| `artifacts/grid-bot/src/pages/logs.tsx` | Log trading real-time per bot (menggantikan halaman markets) |
+| `artifacts/grid-bot/src/pages/dashboard.tsx` | Dashboard dengan session P&L dari fills |
 
 ---
 
-## Codegen Workflow
+## Alur Kerja Codegen
 
-After editing `lib/api-spec/openapi.yaml`:
+Setelah mengedit `lib/api-spec/openapi.yaml`:
 ```bash
 pnpm --filter @workspace/api-spec run codegen
 ```
-This regenerates:
-- `lib/api-client-react/src/generated/api.ts` — React Query hooks
-- `lib/api-zod/src/generated/api.ts` — Zod validation schemas
+Ini akan meregenerasi:
+- `lib/api-client-react/src/generated/api.ts` — hook React Query
+- `lib/api-zod/src/generated/api.ts` — skema validasi Zod
 
-After editing DB schema (`lib/db/src/schema/bots.ts`):
+Setelah mengedit skema DB (`lib/db/src/schema/bots.ts`):
 ```bash
 pnpm --filter @workspace/db run push
-# Then typecheck libs before leaf packages:
+# Lalu typecheck libs sebelum paket leaf:
 pnpm run typecheck:libs
 ```
 
 ---
 
-## Bulk.trade API Gotchas
+## Hal Penting Bulk.trade API
 
-### Signing (CRITICAL — audit these first)
-- Nonce must be **nanoseconds**: `BigInt(Date.now()) * 1_000_000n`
-- `i` flag (isolated margin) is **required** on all order actions — both JSON and binary
-- Ed25519 binary encoding: see `docs/bulk-trade/signing.md`
-- Faucet action JSON field is `u` (not `user` or `amount`): `{ faucet: { u: "pubkey" } }`
-- Faucet binary: `[u32 discriminant=16][32 bytes user pubkey][1 byte amount tag]`
+### Penandatanganan (KRITIS — audit ini dulu)
+- Nonce harus dalam **nanodetik**: `BigInt(Date.now()) * 1_000_000n`
+- Flag `i` (isolated margin) **wajib** pada semua order action — baik JSON maupun binary
+- Encoding binary Ed25519: lihat `docs/bulk-trade/signing.md`
+- Field JSON faucet adalah `u` (bukan `user` atau `amount`): `{ faucet: { u: "pubkey" } }`
+- Binary faucet: `[u32 discriminant=16][32 bytes user pubkey][1 byte amount tag]`
 
-### Endpoints
-- Always use **staging**: `https://staging-api.bulk.trade/api/v1`
+### Endpoint
+- Selalu gunakan **staging**: `https://staging-api.bulk.trade/api/v1`
 - WebSocket: `wss://staging-ws.bulk.trade`
-- All requests go through `/api` proxy to avoid CORS — never call bulk.trade directly from browser
+- Semua request melalui proxy `/api` untuk menghindari CORS — jangan pernah memanggil bulk.trade langsung dari browser
 
-### WebSocket Account Stream
-Subscribe format:
+### Stream Akun WebSocket
+Format subscribe:
 ```json
 { "method": "subscribe", "subscription": [{ "type": "account", "user": "PUBKEY" }] }
 ```
-Message structure — all updates are wrapped:
+Struktur pesan — semua pembaruan dibungkus:
 ```json
 { "type": "account", "data": { "type": "fill|orderUpdate|marginUpdate|...", ... } }
 ```
-Fill event fields: `symbol`, `orderId`, `price`, `size`, `fee`, `isBuy`, `reasonCode`, `maker`, `timestamp`
+Field event fill: `symbol`, `orderId`, `price`, `size`, `fee`, `isBuy`, `reasonCode`, `maker`, `timestamp`
 
-⚠️ `isBuy` ambiguity: docs define it as "true if TAKER bought". For our resting BUY limit orders (maker), when a taker sells against us, `isBuy` may be `false`. Verify with a live staging fill before relying on session P&L direction.
+⚠️ **Ambiguitas `isBuy`**: Dokumentasi mendefinisikannya sebagai "true jika taker membeli". Untuk resting BUY limit order kita (maker), saat taker menjual ke kita, `isBuy` mungkin bernilai `false`. Verifikasi dengan fill live di staging sebelum mengandalkan arah session P&L.
 
-OrderUpdate compact fields: `sym` (not `symbol`), `fillSz`, `origSz` **(signed: negative=sell)**, `sz`, `px`, `oid`, `status`
+Field compact orderUpdate: `sym` (bukan `symbol`), `fillSz`, `origSz` **(bertanda: negatif=jual)**, `sz`, `px`, `oid`, `status`
 
 ---
 
-## Grid Bot Logic
+## Logika Grid Bot
 
-### Grid Calculation (`gridEngine.ts`)
+### Kalkulasi Grid (`gridEngine.ts`)
 ```
-step = (upperPrice - lowerPrice) / gridCount
-levels[i] = lowerPrice + i * step  (i in 0..gridCount, inclusive)
-LONG:    place BUY below currentPrice only
-SHORT:   place SELL above currentPrice only
-NEUTRAL: place BUY below, SELL above currentPrice
-```
-
-### Order Size
-```
-size = (investment * leverage / gridCount) / price
+langkah = (upperPrice - lowerPrice) / gridCount
+level[i] = lowerPrice + i * langkah  (i dari 0 sampai gridCount, inklusif)
+LONG:    tempatkan BUY hanya di bawah harga saat ini
+SHORT:   tempatkan SELL hanya di atas harga saat ini
+NEUTRAL: tempatkan BUY di bawah, SELL di atas harga saat ini
 ```
 
-### Bot Lifecycle — UPFRONT mode
-1. Fetch mark price from `/api/markets/:symbol/ticker`
-2. Cancel all existing orders for the symbol
-3. Place limit orders at all N grid levels immediately:
-   - LONG: BUY at every level **below** current price
-   - SHORT: SELL at every level **above** current price
-   - NEUTRAL: BUY below, SELL above
-4. Connect WebSocket account stream
-5. Monitor SL/TP only — no replenishment (⚠️ known P1 gap — see audit-botRunner.md)
+### Ukuran Order
+```
+ukuran = (investasi * leverage / gridCount) / harga
+```
 
-### Bot Lifecycle — REACTIVE mode (default)
-1. Fetch mark price → set baseline level
-2. Cancel all existing orders
-3. Connect WebSocket account stream
-4. Start price poller (5s interval)
-5. On level crossing UP (price moved to higher band) → place resting BUY orders at the crossed levels (below current)
-6. On level crossing DOWN (price moved to lower band) → place resting SELL orders at the crossed levels (above current)
-7. SL/TP checked every tick before crossing logic
+### Siklus Hidup Bot — Mode UPFRONT
+1. Ambil mark price dari `/api/markets/:symbol/ticker`
+2. Batalkan semua order yang ada untuk simbol tersebut
+3. Tempatkan limit order di semua N level grid sekaligus:
+   - LONG: BUY di setiap level **di bawah** harga saat ini
+   - SHORT: SELL di setiap level **di atas** harga saat ini
+   - NEUTRAL: BUY di bawah, SELL di atas
+4. Hubungkan stream akun WebSocket
+5. Pantau SL/TP saja — tidak ada pengisian ulang (⚠️ celah P1 yang diketahui — lihat `audit-botRunner.md`)
 
-⚠️ **Known P1 gap**: BUY and SELL orders land at the same price boundary (level N base) for the same band. A tight 1-level bounce is zero-profit (only fees paid). Fill-based replenishment (see SKILL.md spec below and audit-botRunner.md) is NOT yet implemented.
+### Siklus Hidup Bot — Mode REACTIVE (default)
+1. Ambil mark price → tetapkan level baseline
+2. Batalkan semua order yang ada
+3. Hubungkan stream akun WebSocket
+4. Mulai price poller (interval 5 detik)
+5. Saat crossing level NAIK (harga bergerak ke band lebih tinggi) → tempatkan order BUY resting di level yang dilewati (di bawah current)
+6. Saat crossing level TURUN (harga bergerak ke band lebih rendah) → tempatkan order SELL resting di level yang dilewati (di atas current)
+7. SL/TP diperiksa setiap tick sebelum logika crossing
 
-### Intended fill-based replenishment (not yet implemented)
-Per SKILL.md spec — this is the correct behavior that should be added:
-- **filled BUY at price P** → place SELL at `snapToGridLevel(P + gridSpacing)` (one level up)
-- **filled SELL at price P** → place BUY at `snapToGridLevel(P - gridSpacing)` (one level down)
-- This guarantees profit = spacing × size − fees per round trip
+⚠️ **Celah P1 yang diketahui**: Order BUY dan SELL mendarat di batas harga yang sama (level N base) untuk band yang sama. Pantulan 1 level yang ketat menghasilkan profit nol (hanya membayar biaya). Pengisian ulang berbasis fill (lihat spesifikasi di bawah dan `audit-botRunner.md`) BELUM diimplementasikan.
+
+### Spesifikasi pengisian ulang berbasis fill (belum diimplementasikan)
+Sesuai spesifikasi — ini adalah perilaku yang benar dan harus ditambahkan:
+- **BUY terisi di harga P** → tempatkan SELL di `snapToGridLevel(P + gridSpacing)` (satu level di atas)
+- **SELL terisi di harga P** → tempatkan BUY di `snapToGridLevel(P - gridSpacing)` (satu level di bawah)
+- Ini menjamin profit = spacing × ukuran − biaya per round trip
 
 ---
 
 ## Session P&L
 
-`BotRunner` tracks session P&L from fills only. Resets to 0 on every `start()`.
+`BotRunner` melacak session P&L hanya dari fills. Reset ke 0 setiap `start()`.
 
 ```typescript
 sessionPnl = sessionSellValue − sessionBuyValue − sessionFees
-// where:
-// sessionSellValue = Σ(SELL fill price × fill size)
-// sessionBuyValue  = Σ(BUY fill price × fill size)
-// sessionFees      = Σ(fee per fill)
+// di mana:
+// sessionSellValue = Σ(harga fill SELL × ukuran fill)
+// sessionBuyValue  = Σ(harga fill BUY × ukuran fill)
+// sessionFees      = Σ(biaya per fill)
 ```
 
-Do NOT use `margin.realizedPnl` from the exchange for per-bot P&L — it is a historical account total since account creation and does not reset per bot session.
+Jangan gunakan `margin.realizedPnl` dari exchange untuk P&L per-bot — itu adalah total akun historis sejak akun dibuat dan tidak pernah reset per sesi bot.
 
 ---
 
-## DB Schema
+## Skema Database
 
 ```sql
 bots (
@@ -191,88 +191,88 @@ bots (
   grid_count    INT NOT NULL,
   investment    REAL NOT NULL,
   leverage      INT DEFAULT 1,
-  stop_loss     REAL,           -- null = disabled
-  take_profit   REAL,           -- null = disabled
+  stop_loss     REAL,           -- null = dinonaktifkan
+  take_profit   REAL,           -- null = dinonaktifkan
   account_pubkey TEXT NOT NULL,
   status        ENUM('IDLE','RUNNING','STOPPED','ERROR') DEFAULT 'IDLE',
-  total_pnl     REAL,           -- NOT updated live; use sessionPnl from BotRunner
-  total_trades  INT,            -- NOT updated live; use runner.totalTrades
+  total_pnl     REAL,           -- TIDAK diperbarui live; gunakan sessionPnl dari BotRunner
+  total_trades  INT,            -- TIDAK diperbarui live; gunakan runner.totalTrades
   created_at    TIMESTAMP DEFAULT NOW(),
   updated_at    TIMESTAMP DEFAULT NOW()
 )
 ```
 
-Status lifecycle: `IDLE` (newly created) → `RUNNING` (on start) → `STOPPED` (on stop) | `ERROR`.
+Siklus hidup status: `IDLE` (baru dibuat) → `RUNNING` (saat start) → `STOPPED` (saat stop) | `ERROR`.
 
 ---
 
-## Common Bugs & Fixes (Historical)
+## Bug Umum & Perbaikan (Historis)
 
-| Bug | Cause | Fix |
-|-----|-------|-----|
-| `bots?.filter is not a function` | React Query returns non-array on first render | `Array.isArray(bots) ? bots : []` |
-| Grid prices jumping wildly (e.g. 76→3945→7814) | Indonesian browser locale: "77.456" read as 77456 | Price inputs use `type="text"` + `parseLocaleNumber()` that handles both `,` and `.` as decimal |
-| Faucet CORS error | Frontend calling bulk.trade directly | Route through `/api/faucet` proxy |
-| Faucet wrong encoding | Wrong field name `amount` instead of `u`, missing 32-byte pubkey in binary | See `signing.ts` faucet section |
-| Session P&L showing $0 | Dashboard read `margin.realizedPnl` (historical exchange total) | Dashboard now uses `sessionPnl` from BotRunner fills, reset each start() |
-| Orders filled immediately (not resting) | REACTIVE crossing side inverted: UP→SELL, DOWN→BUY | Fixed: UP→BUY (resting below), DOWN→SELL (resting above) |
-| SELL orders placed below current price | levelIdx formula for DOWN was `prevLevel-i-1` | Fixed: `currentLevel+i+1` → SELL always above current price |
-| Duplicate resting orders draining margin | No live-order deduplication on rapid bounces | Added `hasOpenOrderAt()` check before each order |
-| totalTrades counting rejected orders | `totalTrades++` was in order placement loop | Moved to `handleFill()` — counts confirmed fills only |
-| `LogLine.text` TS error in logs.tsx | `LogLine = { ts, msg }` not `{ ts, text }` | Fixed to use `.msg` throughout |
-| Bot name/range not matching | DB stores old data, no edit feature | Edit bot page at `/bots/:id/edit` (stop bot first) |
-
----
-
-## Number Input Locale Fix
-
-Price inputs must use `type="text"` with `parseLocaleNumber()` (in create.tsx and edit.tsx):
-- Indonesian locale uses `.` as thousands separator, `,` as decimal → `77.456` = 77456
-- The custom parser detects last separator position to determine decimal separator
-- Also shows a `GridRangePreview` component with live step calculation and warning if range > 100%
+| Bug | Penyebab | Perbaikan |
+|-----|----------|-----------|
+| `bots?.filter is not a function` | React Query mengembalikan non-array saat render pertama | `Array.isArray(bots) ? bots : []` |
+| Harga grid melompat liar (mis. 76→3945→7814) | Locale browser Indonesia: "77.456" dibaca sebagai 77456 | Input harga gunakan `type="text"` + `parseLocaleNumber()` yang menangani `,` dan `.` sebagai desimal |
+| Error CORS pada faucet | Frontend memanggil bulk.trade langsung | Routing melalui proxy `/api/faucet` |
+| Encoding faucet salah | Nama field `amount` bukan `u`, pubkey 32-byte hilang di binary | Lihat bagian faucet di `signing.ts` |
+| Session P&L menampilkan $0 | Dashboard membaca `margin.realizedPnl` (total akun historis) | Dashboard sekarang menggunakan `sessionPnl` dari fills BotRunner, reset setiap `start()` |
+| Order terisi langsung (tidak resting) | Sisi crossing REACTIVE terbalik: UP→SELL, DOWN→BUY | Diperbaiki: UP→BUY (resting di bawah), DOWN→SELL (resting di atas) |
+| Order SELL ditempatkan di bawah harga saat ini | Rumus `levelIdx` untuk DOWN adalah `prevLevel-i-1` | Diperbaiki: `currentLevel+i+1` → SELL selalu di atas harga saat ini |
+| Order resting duplikat menguras margin | Tidak ada deduplikasi order live saat pantulan cepat | Ditambahkan pengecekan `hasOpenOrderAt()` sebelum setiap order |
+| `totalTrades` menghitung order yang ditolak | `totalTrades++` ada di dalam loop penempatan order | Dipindah ke `handleFill()` — hanya menghitung fill yang dikonfirmasi |
+| Error TypeScript `LogLine.text` di `logs.tsx` | `LogLine = { ts, msg }` bukan `{ ts, text }` | Diperbaiki menggunakan `.msg` di seluruh file |
+| Nama/range bot tidak sesuai | DB menyimpan data lama, tidak ada fitur edit | Halaman edit bot di `/bots/:id/edit` (hentikan bot dulu) |
 
 ---
 
-## Audit Checklist
+## Perbaikan Input Angka Berbasis Locale
 
-Run this when auditing before a session or after major changes:
+Input harga harus menggunakan `type="text"` dengan `parseLocaleNumber()` (di `create.tsx` dan `edit.tsx`):
+- Locale Indonesia menggunakan `.` sebagai pemisah ribuan, `,` sebagai desimal → `77.456` = 77456
+- Parser kustom mendeteksi posisi pemisah terakhir untuk menentukan pemisah desimal
+- Juga menampilkan komponen `GridRangePreview` dengan kalkulasi langkah live dan peringatan jika range > 100%
+
+---
+
+## Daftar Periksa Audit
+
+Jalankan ini saat mengaudit sebelum sesi atau setelah perubahan besar:
 
 ```
-[ ] pnpm run typecheck — zero errors
-[ ] pnpm --filter @workspace/db run push — schema in sync
-[ ] API server responds: curl http://localhost:8080/api/bots
-[ ] Frontend loads: check port 24830
-[ ] Signing: nonce is nanoseconds (BigInt(Date.now()) * 1_000_000n)
-[ ] Signing: all order actions have iso=true (isolated margin) in both binary and JSON
-[ ] Signing: reduceOnly correct per mode (LONG+SELL=true, SHORT+BUY=true, NEUTRAL=false)
-[ ] Price inputs: use type="text" not type="number"
-[ ] All external API calls go through /api proxy, never direct from browser
-[ ] Private key never sent to backend (check network tab)
-[ ] Bot edit page: requires bot to be STOPPED first
-[ ] Dashboard Session P&L: reads from BotRunner.sessionPnl (fills-based), not DB or exchange margin
-[ ] REACTIVE crossing: UP→BUY (resting below current), DOWN→SELL (resting above current)
-[ ] Fill-based replenishment: NOT yet implemented — see audit-botRunner.md P1 issues
-[ ] WS isBuy field: verify with live fill that direction matches account perspective
+[ ] pnpm run typecheck — nol error
+[ ] pnpm --filter @workspace/db run push — skema tersinkron
+[ ] API server merespons: curl http://localhost:8080/api/bots
+[ ] Frontend termuat: cek port 24830
+[ ] Penandatanganan: nonce dalam nanodetik (BigInt(Date.now()) * 1_000_000n)
+[ ] Penandatanganan: semua order action memiliki iso=true (isolated margin) di binary dan JSON
+[ ] Penandatanganan: reduceOnly benar sesuai mode (LONG+SELL=true, SHORT+BUY=true, NEUTRAL=false)
+[ ] Input harga: gunakan type="text" bukan type="number"
+[ ] Semua panggilan API eksternal melalui proxy /api, tidak pernah langsung dari browser
+[ ] Private key tidak pernah dikirim ke backend (cek tab network)
+[ ] Halaman edit bot: membutuhkan bot dalam status STOPPED terlebih dahulu
+[ ] Session P&L di dashboard: membaca dari BotRunner.sessionPnl (berbasis fill), bukan DB atau margin exchange
+[ ] Crossing REACTIVE: UP→BUY (resting di bawah current), DOWN→SELL (resting di atas current)
+[ ] Pengisian ulang berbasis fill: BELUM diimplementasikan — lihat audit-botRunner.md untuk masalah P1
+[ ] Field isBuy WS: verifikasi dengan fill live bahwa arahnya sesuai perspektif akun
 ```
 
 ---
 
-## Known P1 Gaps (open — see audit-botRunner.md for details)
+## Celah P1 yang Diketahui (terbuka — lihat audit-botRunner.md untuk detail)
 
-1. **REACTIVE zero-profit**: BUY and SELL land at same price boundary. Fill-based replenishment not implemented.
-2. **UPFRONT no replenishment**: Filled orders are not replaced. Grid depletes over time.
-3. **UPFRONT LONG/SHORT wrong levels**: Places orders at all levels including above/below current price (should skip aggressive side).
+1. **REACTIVE profit nol**: BUY dan SELL mendarat di batas harga yang sama. Pengisian ulang berbasis fill belum diimplementasikan.
+2. **UPFRONT tidak ada pengisian ulang**: Order yang terisi tidak digantikan. Grid habis seiring waktu.
+3. **UPFRONT LONG/SHORT level salah**: Menempatkan order di semua level termasuk di atas/bawah harga saat ini (seharusnya melewati sisi agresif).
 
 ---
 
-## Nav Structure
+## Struktur Navigasi
 
 ```
-/ (Dashboard)       — session P&L total, account balance, running bots
-/logs               — real-time trading logs per bot (color-coded, sorted by time)
-/bots               — bot list (edit + delete)
-/bots/new           — create bot
-/bots/:id           — bot detail (grid viz, logs, orders, start/stop, edit button)
-/bots/:id/edit      — edit bot (stopped bots only)
-/settings           — wallet key management, faucet, staging/prod toggle
+/           (Dashboard)   — total session P&L, saldo akun, bot yang berjalan
+/logs                     — log trading real-time per bot (kode warna, diurutkan berdasarkan waktu)
+/bots                     — daftar bot (edit + hapus)
+/bots/new                 — buat bot
+/bots/:id                 — detail bot (viz grid, log, orders, start/stop, tombol edit)
+/bots/:id/edit            — edit bot (khusus bot yang STOPPED)
+/settings                 — manajemen kunci wallet, faucet, toggle staging/prod
 ```
