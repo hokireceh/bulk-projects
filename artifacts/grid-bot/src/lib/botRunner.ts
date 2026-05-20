@@ -1,5 +1,5 @@
 import { sizePerGrid, snapToGridLevel } from "./gridEngine";
-import { buildAndSign, submitTransaction, cancelAllOrders } from "./signing";
+import { buildAndSign, submitTransaction, cancelAllOrders, setLeverage } from "./signing";
 import { getEndpoint } from "./keys";
 
 const PROXY_API = "/api";
@@ -302,6 +302,18 @@ export class BotRunner {
         env: getEndpoint(),
       });
       this.log(cancelled ? "Existing orders cancelled." : "Cancel returned error (may be none open).");
+
+      const lev = Math.max(1, Math.min(50, Math.round(this.config.leverage)));
+      this.log(`Setting leverage ${lev}x for ${this.config.symbol}...`);
+      const levOk = await setLeverage({
+        privateKey: this.config.privateKey,
+        account: this.config.accountPubkey,
+        symbol: this.config.symbol,
+        leverage: lev,
+        endpoint: PROXY_API,
+        env: getEndpoint(),
+      });
+      this.log(levOk ? `Leverage set to ${lev}x.` : "Leverage set returned error — continuing.");
 
       this.log(
         `Grid initialized: ${this.config.gridCount} levels | ` +

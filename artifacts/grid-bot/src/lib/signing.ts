@@ -90,7 +90,13 @@ export interface FaucetAction {
   amount?: number; // optional; plain f64
 }
 
-export type BulkAction = LimitAction | CancelAllAction | FaucetAction;
+export interface UpdateUserSettingsAction {
+  type: "updateUserSettings";
+  // symbol → max leverage (plain f64, 1–50)
+  leverage: Record<string, number>;
+}
+
+export type BulkAction = LimitAction | CancelAllAction | FaucetAction | UpdateUserSettingsAction;
 
 // ── Wincode serialization per action ─────────────────────────────────────────
 
@@ -126,6 +132,18 @@ function encodeAction(w: WincodeWriter, action: BulkAction) {
     }
     return;
   }
+
+  if (action.type === "updateUserSettings") {
+    // Binary: discriminant 18, u64 entry count, then per entry: str(symbol) + plain f64 leverage
+    w.u32le(ACTION_CODES.updateUserSettings);
+    const entries = Object.entries(action.leverage);
+    w.u64le(BigInt(entries.length));
+    for (const [sym, lev] of entries) {
+      w.str(sym);
+      w.f64le(lev); // plain f64, NOT scaled
+    }
+    return;
+  }
 }
 
 // ── Action → JSON wire format ─────────────────────────────────────────────────
@@ -152,6 +170,10 @@ function actionToJson(action: BulkAction): unknown {
     return action.amount !== undefined
       ? { faucet: { u: action.user, amount: action.amount } }
       : { faucet: { u: action.user } };
+  }
+  if (action.type === "updateUserSettings") {
+    // JSON: { "updateUserSettings": { "m": { "BTC-USD": 5.0 } } }
+    return { updateUserSettings: { m: action.leverage } };
   }
   return {};
 }
@@ -256,6 +278,23 @@ export async function cancelAllOrders(opts: {
 }): Promise<boolean> {
   const tx = buildAndSign(
     [{ type: "cxa", symbols: [opts.symbol] }],
+    opts.account,
+    opts.privateKey
+  );
+  const result = await submitTransaction(tx, opts.endpoint, opts.env ?? "staging");
+  return result.ok;
+}
+
+export async function setLeverage(opts: {
+  privateKey: string;
+  account: string;
+  symbol: string;
+  leverage: number;
+  endpoint: string;
+  env?: string;
+}): Promise<boolean> {
+  const tx = buildAndSign(
+    [{ type: "updateUserSettings", leverage: { [opts.symbol]: opts.leverage } }],
     opts.account,
     opts.privateKey
   );
