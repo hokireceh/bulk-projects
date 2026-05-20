@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Play, Square, Terminal, Pencil } from "lucide-react";
 import { Link } from "wouter";
-import { calculateGridLevels, sizePerGrid } from "@/lib/gridEngine";
+import { allGridLevels } from "@/lib/gridEngine";
 import { BotRunner, type BotConfig, type LogLine, type MarginData, type PositionData, type LiveOrder } from "@/lib/botRunner";
 import { getPrivateKey } from "@/lib/keys";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -46,6 +46,8 @@ export default function BotDetail() {
   const [position, setPosition] = useState<PositionData | null>(null);
   const [liveOrders, setLiveOrders] = useState<LiveOrder[]>([]);
   const [totalTrades, setTotalTrades] = useState(0);
+  const [runnerPrice, setRunnerPrice] = useState(0);
+  const [lastLevel, setLastLevel] = useState<number | null>(null);
 
   const { data: bot, isLoading } = useGetBot(botId, {
     query: { enabled: !!botId, queryKey: getGetBotQueryKey(botId), refetchInterval: 5000 }
@@ -62,12 +64,13 @@ export default function BotDetail() {
   const startBot = useStartBot();
   const stopBot = useStopBot();
 
-  const currentPrice: number = ticker?.markPrice ?? 0;
-  const midPrice = bot ? (bot.lowerPrice + bot.upperPrice) / 2 : 0;
-  const priceForGrid = currentPrice > 0 ? currentPrice : midPrice;
+  const tickerPrice: number = ticker?.markPrice ?? 0;
+  // Prefer live price from the running bot's poller; fall back to ticker
+  const currentPrice = runnerPrice > 0 ? runnerPrice : tickerPrice;
 
-  const gridLevels = bot
-    ? calculateGridLevels(bot.lowerPrice, bot.upperPrice, bot.gridCount, bot.mode, priceForGrid)
+  // All grid level boundary prices (no BUY/SELL assignment — that's decided at crossing time)
+  const gridBoundaries = bot
+    ? allGridLevels(bot.lowerPrice, bot.upperPrice, bot.gridCount)
     : [];
 
   // Sync live data from runner on every update
@@ -79,6 +82,8 @@ export default function BotDetail() {
     if (r.position) setPosition({ ...r.position });
     setLiveOrders([...r.openOrders]);
     setTotalTrades(r.totalTrades);
+    if (r.currentPrice > 0) setRunnerPrice(r.currentPrice);
+    setLastLevel((r as any).lastLevel ?? null);
   }, []);
 
   // On page load: restore logs + fetch live account data from bulk.trade
@@ -297,17 +302,26 @@ export default function BotDetail() {
             </CardHeader>
             <CardContent>
               <div className="h-[420px] relative w-full rounded-md border border-border bg-background/50 p-3 flex flex-col justify-between overflow-hidden">
-                {[...gridLevels].reverse().map((level, i) => (
-                  <div key={i} className="flex items-center w-full z-10 text-xs font-mono">
-                    <div className={`w-20 shrink-0 tabular-nums ${level.side === "SELL" ? "text-red-400" : "text-green-400"}`}>
-                      {level.price.toFixed(2)}
+                {[...gridBoundaries].reverse().map((price, i) => {
+                  const levelIdx = gridBoundaries.length - 1 - i; // index from bottom
+                  const isCurrentBand = lastLevel !== null && levelIdx === lastLevel;
+                  const abovePrice = currentPrice > 0 && price > currentPrice;
+                  const belowPrice = currentPrice > 0 && price <= currentPrice;
+                  return (
+                    <div
+                      key={i}
+                      className={`flex items-center w-full z-10 text-xs font-mono ${isCurrentBand ? "opacity-100" : "opacity-70"}`}
+                    >
+                      <div className={`w-20 shrink-0 tabular-nums ${abovePrice ? "text-red-400" : belowPrice ? "text-green-400" : "text-muted-foreground"}`}>
+                        {price.toFixed(2)}
+                      </div>
+                      <div className={`flex-1 h-px ${isCurrentBand ? "bg-primary/40" : "bg-border/40"}`} />
+                      <div className={`ml-2 shrink-0 text-[10px] font-semibold w-10 text-right ${abovePrice ? "text-red-500" : belowPrice ? "text-green-500" : "text-muted-foreground"}`}>
+                        {abovePrice ? "SELL" : belowPrice ? "BUY" : "—"}
+                      </div>
                     </div>
-                    <div className="flex-1 h-px bg-border/40" />
-                    <div className={`ml-2 shrink-0 text-[10px] font-semibold ${level.side === "SELL" ? "text-red-500" : "text-green-500"}`}>
-                      {level.side}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 {/* Current price marker */}
                 {currentPrice > 0 && bot.upperPrice > bot.lowerPrice && (
                   <div
