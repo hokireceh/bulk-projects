@@ -1,7 +1,9 @@
 import { calculateGridLevels, sizePerGrid } from "./gridEngine";
 import { buildAndSign, submitTransaction, cancelAllOrders } from "./signing";
 
-const STAGING_HTTP = "https://staging-api.bulk.trade/api/v1";
+// All HTTP requests go through our API proxy to avoid browser CORS restrictions.
+// The proxy forwards to https://staging-api.bulk.trade/api/v1 server-side.
+const PROXY_API = "/api";
 const STAGING_WS = "wss://staging-ws.bulk.trade";
 
 export interface BotConfig {
@@ -15,8 +17,6 @@ export interface BotConfig {
   gridCount: number;
   investment: number;
   leverage: number;
-  httpEndpoint?: string;
-  wsEndpoint?: string;
 }
 
 export type LogLine = { ts: number; msg: string };
@@ -37,9 +37,6 @@ export class BotRunner {
 
   get isRunning() { return this.running; }
 
-  private get http() { return this.config.httpEndpoint ?? STAGING_HTTP; }
-  private get wsUrl() { return this.config.wsEndpoint ?? STAGING_WS; }
-
   private log(msg: string) {
     this.logs.push({ ts: Date.now(), msg });
     if (this.logs.length > 200) this.logs.shift();
@@ -55,9 +52,9 @@ export class BotRunner {
     this.log(`Starting bot #${this.config.botId} for ${this.config.symbol} (${this.config.mode})`);
 
     try {
-      // 1. Fetch current mark price
+      // 1. Fetch current mark price (via API proxy to avoid CORS)
       const tickerRes = await fetch(
-        `${this.http}/ticker/${encodeURIComponent(this.config.symbol)}`
+        `${PROXY_API}/markets/${encodeURIComponent(this.config.symbol)}/ticker`
       );
       if (!tickerRes.ok) throw new Error(`Ticker fetch failed: ${tickerRes.status}`);
       const ticker = await tickerRes.json() as any;
@@ -71,7 +68,7 @@ export class BotRunner {
         privateKey: this.config.privateKey,
         account: this.config.accountPubkey,
         symbol: this.config.symbol,
-        endpoint: this.http,
+        endpoint: PROXY_API,
       });
       this.log(cancelled ? "Existing orders cancelled." : "Cancel returned error (may be none open).");
 
@@ -97,7 +94,7 @@ export class BotRunner {
           this.config.accountPubkey,
           this.config.privateKey
         );
-        const result = await submitTransaction(tx, this.http);
+        const result = await submitTransaction(tx, PROXY_API);
         if (result.ok) {
           placed++;
           const st = (result.statuses?.[0] as any);
@@ -128,7 +125,7 @@ export class BotRunner {
     if (!this.running) return;
     this.log("Connecting WebSocket account stream...");
 
-    this.ws = new WebSocket(this.wsUrl);
+    this.ws = new WebSocket(STAGING_WS);
 
     this.ws.onopen = () => {
       this.log("WebSocket connected.");
@@ -191,7 +188,7 @@ export class BotRunner {
       this.config.accountPubkey,
       this.config.privateKey
     );
-    submitTransaction(tx, this.http).then((result) => {
+    submitTransaction(tx, PROXY_API).then((result) => {
       if (result.ok) {
         this.log(`↺ Replenish ${replenishIsBuy ? "BUY" : "SELL"} ${size.toFixed(6)} @ ${replenishPrice.toFixed(2)}`);
       } else {
@@ -216,29 +213,10 @@ export class BotRunner {
       privateKey: this.config.privateKey,
       account: this.config.accountPubkey,
       symbol: this.config.symbol,
-      endpoint: this.http,
+      endpoint: PROXY_API,
     });
     this.log(cancelled ? "All orders cancelled. Bot stopped." : "Cancel error. Bot stopped.");
     this.onUpdate?.();
   }
 }
 
-// ── Singleton registry (survives re-renders) ──────────────────────────────────
-
-const runners = new Map<number, BotRunner>();
-
-export function getRunner(botId: number): BotRunner | undefined {
-  return runners.get(botId);
-}
-
-export function createOrGetRunner(config: BotConfig, onUpdate: () => void): BotRunner {
-  const existing = runners.get(config.botId);
-  if (existing) return existing;
-  const runner = new BotRunner(config, onUpdate);
-  runners.set(config.botId, runner);
-  return runner;
-}
-
-export function destroyRunner(botId: number) {
-  runners.delete(botId);
-}

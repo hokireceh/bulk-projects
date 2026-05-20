@@ -93,4 +93,20 @@ router.post("/account", async (req, res): Promise<void> => {
   }
 });
 
+// Proxy: forward signed transactions to bulk.trade (avoids browser CORS)
+router.post("/order", async (req, res): Promise<void> => {
+  try {
+    const response = await fetch(`${BULK_API}/order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (err) {
+    req.log.error({ err }, "Error proxying order to bulk.trade");
+    res.status(502).json({ error: "Failed to submit order" });
+  }
+});
+
 export default router;

@@ -12,7 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Play, Square, Terminal } from "lucide-react";
 import { calculateGridLevels, sizePerGrid } from "@/lib/gridEngine";
-import { BotRunner, type LogLine } from "@/lib/botRunner";
+import { BotRunner, type BotConfig, type LogLine } from "@/lib/botRunner";
 import { getPrivateKey } from "@/lib/keys";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";

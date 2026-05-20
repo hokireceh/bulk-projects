@@ -173,15 +173,16 @@ export default function CreateBot() {
                                         field.onChange(val.toUpperCase());
                                         setSymbolOpen(false);
                                       }}
+                                      className="flex items-center gap-2"
                                     >
                                       <Check
                                         className={cn(
-                                          "mr-2 h-4 w-4",
+                                          "h-4 w-4 shrink-0",
                                           field.value === market.symbol ? "opacity-100" : "opacity-0"
                                         )}
                                       />
-                                      <span className="font-medium">{market.symbol}</span>
-                                      <span className="ml-2 text-xs text-muted-foreground">
+                                      <span className="font-medium shrink-0">{market.symbol}</span>
+                                      <span className="text-xs text-muted-foreground truncate">
                                         {market.baseAsset}/{market.quoteAsset} · {market.maxLeverage}x max
                                       </span>
                                     </CommandItem>
