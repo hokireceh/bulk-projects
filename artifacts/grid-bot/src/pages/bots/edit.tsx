@@ -10,23 +10,80 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useLocation, useParams } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
+import { useWatch } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { Link } from "wouter";
 
+function parseLocaleNumber(val: unknown): number {
+  if (typeof val === "number") return val;
+  if (typeof val === "string") {
+    const s = val.trim();
+    const lastDot   = s.lastIndexOf(".");
+    const lastComma = s.lastIndexOf(",");
+    if (lastDot > -1 && lastComma > -1) {
+      if (lastComma > lastDot) {
+        return parseFloat(s.replace(/\./g, "").replace(",", "."));
+      } else {
+        return parseFloat(s.replace(/,/g, ""));
+      }
+    }
+    if (lastComma > -1) {
+      return parseFloat(s.replace(",", "."));
+    }
+    return parseFloat(s);
+  }
+  return NaN;
+}
+
+const priceField = z.preprocess(parseLocaleNumber, z.number().positive("Harus lebih dari 0"));
+
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   mode: z.enum(["LONG", "SHORT", "NEUTRAL"]),
-  lowerPrice: z.coerce.number().positive("Must be positive"),
-  upperPrice: z.coerce.number().positive("Must be positive"),
+  lowerPrice: priceField,
+  upperPrice: priceField,
   gridCount: z.coerce.number().int().min(2).max(200),
-  investment: z.coerce.number().positive("Must be positive"),
+  investment: priceField,
   leverage: z.coerce.number().int().min(1).max(100),
 }).refine(data => data.upperPrice > data.lowerPrice, {
   message: "Upper price must be greater than lower price",
   path: ["upperPrice"],
 });
+
+function GridRangePreview({ control }: { control: any }) {
+  const lower    = useWatch({ control, name: "lowerPrice" });
+  const upper    = useWatch({ control, name: "upperPrice" });
+  const gridCount = useWatch({ control, name: "gridCount" });
+
+  const preview = useMemo(() => {
+    const lo = typeof lower === "number" ? lower : parseLocaleNumber(lower);
+    const hi = typeof upper === "number" ? upper : parseLocaleNumber(upper);
+    const n  = Number(gridCount);
+    if (!lo || !hi || !n || hi <= lo) return null;
+    const step = (hi - lo) / n;
+    return { lo, hi, step, n };
+  }, [lower, upper, gridCount]);
+
+  if (!preview) return null;
+
+  return (
+    <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
+      <p className="font-medium text-foreground/80">Preview Grid</p>
+      <div className="flex gap-6 text-muted-foreground font-mono text-xs">
+        <span>Lower: <span className="text-foreground">{preview.lo.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span></span>
+        <span>Upper: <span className="text-foreground">{preview.hi.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span></span>
+        <span>Step: <span className="text-primary">{preview.step.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span> / grid</span>
+      </div>
+      {preview.hi > preview.lo * 2 && (
+        <p className="text-amber-400 text-xs">
+          Peringatan: range sangat besar ({((preview.hi / preview.lo - 1) * 100).toFixed(0)}%). Pastikan angka yang dimasukkan benar.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export default function EditBot() {
   const { id } = useParams<{ id: string }>();
@@ -167,7 +224,7 @@ export default function EditBot() {
                       <FormItem>
                         <FormLabel>Lower Price Limit</FormLabel>
                         <FormControl>
-                          <Input type="number" step="any" {...field} />
+                          <Input type="text" inputMode="decimal" placeholder="e.g. 76500" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -180,13 +237,15 @@ export default function EditBot() {
                       <FormItem>
                         <FormLabel>Upper Price Limit</FormLabel>
                         <FormControl>
-                          <Input type="number" step="any" {...field} />
+                          <Input type="text" inputMode="decimal" placeholder="e.g. 78000" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
+
+                <GridRangePreview control={form.control} />
 
                 <div className="grid grid-cols-3 gap-4">
                   <FormField
@@ -209,7 +268,7 @@ export default function EditBot() {
                       <FormItem>
                         <FormLabel>Investment (USDC)</FormLabel>
                         <FormControl>
-                          <Input type="number" step="any" {...field} />
+                          <Input type="text" inputMode="decimal" placeholder="e.g. 1000" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
