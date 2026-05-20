@@ -379,7 +379,7 @@ export class BotRunner {
       }
 
       const tx = buildAndSign(
-        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly: false, iso: true }],
+        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly: false, iso: false }],
         this.config.accountPubkey,
         this.config.privateKey
       );
@@ -530,13 +530,15 @@ export class BotRunner {
         if (!this.running) break;
 
         // Level index formula:
-        // UP   (BUY) : prevLevel+1 → currentLevel  — all base prices BELOW current ✓
-        // DOWN (SELL): currentLevel+1 → prevLevel   — all base prices ABOVE current ✓
-        // Using currentLevel+i+1 for DOWN ensures SELL orders rest above current price
-        // instead of crossing (the old prevLevel-i-1 formula put them below current).
+        // UP   (BUY) : prevLevel → prevLevel+orderCount-1  — all BELOW current ✓
+        //   Using prevLevel+i (not prevLevel+i+1) so BUY rests at the level just
+        //   crossed FROM, which is now below price. The old +1 offset placed the
+        //   first BUY at currentLevel (AT current price) — same as the SELL on a
+        //   reverse crossing, causing identical BUY and SELL prices.
+        // DOWN (SELL): currentLevel+1 → prevLevel  — all ABOVE current ✓
         const levelIdx = levelsMoved < 0
-          ? currentLevel + i + 1
-          : prevLevel + i + 1;
+          ? currentLevel + i + 1   // SELL: above current ✓
+          : prevLevel + i;          // BUY : at/below prev level ✓
 
         if (levelIdx < 0 || levelIdx > this.config.gridCount) continue;
 
@@ -564,7 +566,7 @@ export class BotRunner {
         }
 
         const tx = buildAndSign(
-          [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly, iso: true }],
+          [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly, iso: false }],
           this.config.accountPubkey,
           this.config.privateKey
         );
@@ -817,7 +819,7 @@ export class BotRunner {
     }
 
     const tx = buildAndSign(
-      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price, size, tif: "GTC", reduceOnly, iso: true }],
+      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price, size, tif: "GTC", reduceOnly, iso: false }],
       this.config.accountPubkey,
       this.config.privateKey
     );
