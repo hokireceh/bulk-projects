@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc, sum, count } from "drizzle-orm";
+import { eq, desc, sum, count, and } from "drizzle-orm";
 import { db, botsTable, botOrdersTable } from "@workspace/db";
 import {
   CreateBotBody,
@@ -46,6 +46,9 @@ router.post("/bots", async (req, res): Promise<void> => {
     investment: parsed.data.investment,
     leverage: parsed.data.leverage ?? 1,
     accountPubkey: parsed.data.accountPubkey,
+    orderMode: parsed.data.orderMode ?? "REACTIVE",
+    stopLoss: parsed.data.stopLoss ?? null,
+    takeProfit: parsed.data.takeProfit ?? null,
     status: "IDLE",
   }).returning();
 
@@ -89,6 +92,9 @@ router.patch("/bots/:id", async (req, res): Promise<void> => {
   if (parsed.data.gridCount !== undefined) updateData.gridCount = parsed.data.gridCount;
   if (parsed.data.investment !== undefined) updateData.investment = parsed.data.investment;
   if (parsed.data.leverage !== undefined) updateData.leverage = parsed.data.leverage;
+  if (parsed.data.orderMode !== undefined) updateData.orderMode = parsed.data.orderMode;
+  if (parsed.data.stopLoss !== undefined) updateData.stopLoss = parsed.data.stopLoss ?? null;
+  if (parsed.data.takeProfit !== undefined) updateData.takeProfit = parsed.data.takeProfit ?? null;
 
   const [bot] = await db
     .update(botsTable)
@@ -235,12 +241,12 @@ router.get("/bots/:id/stats", async (req, res): Promise<void> => {
       realizedPnl: sum(botOrdersTable.pnl),
     })
     .from(botOrdersTable)
-    .where(eq(botOrdersTable.botId, botId));
+    .where(and(eq(botOrdersTable.botId, botId), eq(botOrdersTable.status, "FILLED")));
 
   const openOrders = await db
     .select({ cnt: count() })
     .from(botOrdersTable)
-    .where(eq(botOrdersTable.botId, botId));
+    .where(and(eq(botOrdersTable.botId, botId), eq(botOrdersTable.status, "OPEN")));
 
   const totalOrders = Number(ordersAgg[0]?.totalOrders ?? 0);
   const totalTrades = Number(filledOrders[0]?.totalTrades ?? 0);

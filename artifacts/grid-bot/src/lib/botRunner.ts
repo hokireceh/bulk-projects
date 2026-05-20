@@ -370,6 +370,8 @@ export class BotRunner {
         side = "SELL";
       } else {
         // NEUTRAL: BUY below current price, SELL above
+        // Skip levels within 0.001 of currentPrice (mirror: gridEngine.ts calculateGridLevels)
+        if (Math.abs(orderPrice - currentPrice) < 0.001) { skipped++; continue; }
         side = levelIdx <= currentLevel ? "BUY" : "SELL";
       }
 
@@ -769,7 +771,7 @@ export class BotRunner {
     if (weBought  && replenishPrice <= filledPrice) return;
     if (!weBought && replenishPrice >= filledPrice) return;
 
-    setTimeout(() => void this.placeReplenishOrder(replenishSide, replenishPrice), 400);
+    setTimeout(() => void this.placeReplenishOrder(replenishSide, replenishPrice), 1_500);
   }
 
   /**

@@ -56,6 +56,54 @@ pnpm run typecheck
 **Perbaikan**: `log.msg` — benar sesuai `LogLine = { ts: number; msg: string }`
 **Status tsc sebelum**: 10 error; setelah: 0 error
 
+### FIX-08 — Fill-based replenishment di `handleFill()` ✅ RESOLVED (P1-REACTIVE + P1-UPFRONT)
+**Sebelumnya**: `handleFill()` hanya melacak session P&L; tidak menempatkan order baru setelah fill.
+**Perbaikan**: `scheduleReplenishment()` dipanggil dari `handleFill()` (baris 751) — BUY fill → SELL satu level di atas; SELL fill → BUY satu level di bawah. Berlaku untuk REACTIVE maupun UPFRONT.
+**File**: `botRunner.ts` baris 748–823
+
+### FIX-09 — UPFRONT LONG/SHORT skip level di atas/bawah harga saat ini ✅ RESOLVED (P1-UPFRONT-LEVEL)
+**Sebelumnya**: Semua `gridCount` level mendapat order BUY (LONG) atau SELL (SHORT), termasuk yang di atas/bawah harga saat ini → aggressive fill.
+**Perbaikan**: Guard eksplisit di `placeAllOrdersUpfront()`:
+- LONG: `if (orderPrice >= currentPrice) { skipped++; continue; }` (baris 365)
+- SHORT: `if (orderPrice <= currentPrice) { skipped++; continue; }` (baris 369)
+**File**: `botRunner.ts` baris 363–373
+
+### FIX-10 — Map `recentOrders` pruning ✅ RESOLVED (P2-recentOrders)
+**Sebelumnya**: Tidak ada pembersihan; Map tumbuh tanpa batas.
+**Perbaikan**: Loop prune di awal `isDuplicateOrder()` — hapus entri yang lebih lama dari `DUP_GUARD_MS` (baris 217–219).
+**File**: `botRunner.ts` baris 214–225
+
+### FIX-11 — POST /bots tidak menyimpan orderMode / stopLoss / takeProfit ✅ RESOLVED (BUG-CREATE-FIELDS)
+**Sebelumnya**: INSERT ke `botsTable` tidak menyertakan `orderMode`, `stopLoss`, `takeProfit` — nilai frontend di-drop, DB menyimpan default.
+**Perbaikan**: Tiga field ditambahkan ke INSERT (baris 52–54).
+**File**: `artifacts/api-server/src/routes/bots.ts` baris 52–54
+
+### FIX-12 — PATCH /bots/:id tidak mengupdate orderMode / stopLoss / takeProfit ✅ RESOLVED (BUG-UPDATE-FIELDS)
+**Sebelumnya**: Blok `updateData` tidak menangani ketiga field — edit bot dengan SL/TP di-drop tanpa error.
+**Perbaikan**: Tiga handler ditambahkan ke blok `updateData` (baris 98–100). `stopLoss ?? null` dan `takeProfit ?? null` memastikan clear eksplisit juga tersimpan.
+**File**: `artifacts/api-server/src/routes/bots.ts` baris 98–100
+
+### FIX-13 — GET /bots/:id/stats: filledOrders dan openOrders tanpa filter status ✅ RESOLVED (BUG-STATS-FILTER)
+**Sebelumnya**: Kedua query hanya filter `botId` — `totalTrades` menghitung semua order termasuk OPEN/CANCELLED; `openOrders` sama persis dengan `totalOrders`.
+**Perbaikan**: Filter `status` ditambahkan menggunakan `and()` dari drizzle-orm:
+- `filledOrders`: `and(eq(botId), eq(status, "FILLED"))` (baris 247)
+- `openOrders`: `and(eq(botId), eq(status, "OPEN"))` (baris 252)
+**File**: `artifacts/api-server/src/routes/bots.ts` baris 241–252
+
+### FIX-14 — NEUTRAL UPFRONT tidak skip level tepat di currentPrice ✅ RESOLVED (BUG-NEUTRAL-UPFRONT-BOUNDARY)
+**Sebelumnya**: `placeAllOrdersUpfront()` NEUTRAL tidak memiliki guard untuk level dalam jarak 0.001 dari currentPrice — bisa BUY aggressive fill di edge case harga tepat di batas grid.
+**Perbaikan**: Guard ditambahkan sebelum penentuan sisi:
+```typescript
+if (Math.abs(orderPrice - currentPrice) < 0.001) { skipped++; continue; }
+```
+Mirror: `gridEngine.ts` `calculateGridLevels()` baris 26.
+**File**: `botRunner.ts` baris 377
+
+### FIX-15 — Race condition positionUpdate saat replenishment LONG/SHORT ✅ RESOLVED (BUG-REPLENISH-RACE)
+**Sebelumnya**: Delay 400ms antara fill dan `placeReplenishOrder()` — terlalu singkat untuk positionUpdate WS tiba; replenish SELL di-skip dengan "tidak ada posisi yang sesuai".
+**Perbaikan**: Delay dinaikkan ke 1500ms (baris 777).
+**File**: `botRunner.ts` baris 777
+
 ---
 
 ## 3. Audit Penandatanganan & Protokol
@@ -63,10 +111,17 @@ pnpm run typecheck
 | Pemeriksaan | Status | Detail |
 |-------------|--------|--------|
 | Nonce dalam nanodetik | ✅ | `BigInt(Date.now()) * 1_000_000n` (`signing.ts` baris 182) |
+| Binary limit layout lengkap | ✅ | `u32 disc` → `str symbol` → `u8 isBuy` → `u64 price` → `u64 size` → `u32 tif` → `u8 reduceOnly` → `u8 iso` |
 | `iso: true` dalam binary | ✅ | `w.u8(action.iso ? 1 : 0)` — semua limit order meneruskan `iso: true` |
 | `iso: true` dalam JSON | ✅ | `i: action.iso ?? false` dalam format wire |
 | `reduceOnly` dalam binary | ✅ | `w.u8(action.reduceOnly ? 1 : 0)` |
 | `reduceOnly` dalam JSON | ✅ | `r: action.reduceOnly ?? false` |
+| JSON field names limit order | ✅ | `c`, `b`, `px` (string), `sz` (string), `tif`, `r`, `i` — sesuai docs |
+| Binary cxa layout | ✅ | `u32 disc` → `u64 count` → `str[] symbols` |
+| JSON cxa field | ✅ | `{ cxa: { c: symbols[] } }` — sesuai docs |
+| Nonce u64 LE setelah actions | ✅ | `w.u64le(nonce)` setelah loop encodeAction (`signing.ts` baris 187) |
+| Account 32-byte setelah nonce | ✅ | `w.raw(bs58.decode(accountBase58))` (baris 189) |
+| Signer tidak ikut signed bytes | ✅ | Hanya di return object, tidak ditulis ke writer |
 | Layout binary faucet | ✅ | 32 byte pubkey + tag Option (`u8`) — sesuai dokumentasi |
 | Nama field JSON faucet | ✅ | `{ faucet: { u: pubkey } }` — sesuai dokumentasi (field `u`, bukan `user`) |
 | Private key tidak pernah dikirim ke backend | ✅ | Hanya diteruskan ke `buildAndSign()` di browser; proxy route hanya meneruskan tx yang sudah ditandatangani |
@@ -132,103 +187,6 @@ Mengembalikan indeks band berbasis floor, diklem ke `[0, gridCount-1]`. ✅
 
 ## 6. Masalah yang Masih Terbuka
 
----
-
-### 🔴 P1 — Mode REACTIVE: BUY dan SELL ditempatkan di batas harga yang sama (profit nol pada pantulan satu level)
-
-**Lokasi**: `botRunner.ts` `runGridCheck()` baris 523–525
-
-**Akar masalah**: Rumus UP (BUY) dan DOWN (SELL) menghasilkan `levelBasePrice(N)` yang SAMA untuk level N yang sama:
-```
-Crossing naik (12→13):  BUY  di levelIdx = prevLevel + i + 1 = 13  → harga = L + 13*S
-Crossing turun (13→12): SELL di levelIdx = currentLevel + i + 1 = 13 → harga = L + 13*S
-```
-Pantulan bolak-balik antara level 12 dan 13 menghasilkan:
-- BUY @ L+13*S terisi saat harga turun ke batas itu
-- SELL @ L+13*S ditempatkan segera setelah → terisi saat harga naik kembali
-- **Net = 0. Hanya biaya yang hilang.**
-
-Hal ini berlaku juga untuk pergerakan multi-level: setiap BUY dan SELL untuk level N yang sama selalu berada di harga yang sama.
-
-**Spesifikasi SKILL.md menyatakan**: "Saat fill: isi ulang — BUY terisi → tempatkan SELL satu langkah di atas; SELL terisi → tempatkan BUY satu langkah di bawah."
-Pengisian ulang berbasis fill ini BELUM diimplementasikan. `handleFill()` hanya melacak session P&L; tidak menempatkan order pengisian ulang.
-
-**Opsi perbaikan**:
-
-**Opsi A (pengisian ulang berbasis fill — benar sesuai SKILL.md)**:
-Di `handleFill()`, setelah mendeteksi fill:
-- BUY terisi di harga P → tempatkan resting SELL di `snapToGridLevel(P + gridSpacing, ...)` (satu level di atas)
-- SELL terisi di harga P → tempatkan resting BUY di `snapToGridLevel(P - gridSpacing, ...)` (satu level di bawah)
-Ini menjamin spread = 1 spacing → profit = spacing × size − biaya per round trip. Penempatan berbasis crossing di `runGridCheck()` hanya menjadi seeding awal.
-
-**Opsi B (koreksi offset crossing)**:
-Untuk crossing turun, geser levelIdx ke atas sebesar 1:
-```typescript
-const levelIdx = levelsMoved < 0
-  ? currentLevel + i + 2   // ← sebelumnya +1
-  : prevLevel + i + 1;
-```
-Profit = 1 spacing per round trip. Lebih sederhana, tapi tidak menangani kasus di mana tidak ada crossing sebelum fill.
-
-**Rekomendasi**: Opsi A (pengisian ulang berbasis fill) — sesuai spesifikasi SKILL.md, benar untuk mode UPFRONT maupun REACTIVE.
-
----
-
-### 🔴 P1 — Mode UPFRONT: tidak ada pengisian ulang setelah fill
-
-**Lokasi**: `botRunner.ts` — `handleFill()`, `placeAllOrdersUpfront()`
-
-Saat mode UPFRONT berjalan:
-- Semua N order ditempatkan langsung saat start
-- Saat fill terjadi → tidak ada order baru yang ditempatkan
-- Level yang terisi selamanya kosong; tidak akan pernah trading lagi
-- Setelah cukup banyak fill, grid habis total dan bot diam dengan semua margin dalam posisi
-
-**Perbaikan**: Di `handleFill()`, cek `config.orderMode === "UPFRONT"` dan terapkan pengisian ulang berbasis fill (sama seperti Opsi A di atas). Ini adalah perilaku standar semua grid bot.
-
----
-
-### 🔴 P1 — Mode UPFRONT LONG/SHORT menempatkan order di level yang salah
-
-**Lokasi**: `botRunner.ts` `placeAllOrdersUpfront()` baris 357–364
-
-Untuk mode LONG: **semua `gridCount` level** mendapat order BUY, termasuk level DI ATAS harga saat ini. Order-order ini langsung crossing buku sebagai aggressive fill (bukan resting limit order). Exchange mengisinya di harga pasar, membuang spread pada saat masuk.
-
-Untuk mode SHORT: masalah yang sama — SELL di bawah harga saat ini langsung terisi.
-
-**Perilaku yang benar** (sesuai `gridEngine.ts`): LONG menempatkan BUY hanya di bawah harga saat ini; SHORT menempatkan SELL hanya di atas harga saat ini.
-
-**Perbaikan**:
-```typescript
-if (this.config.mode === "LONG" && orderPrice >= currentPrice) { skipped++; continue; }
-if (this.config.mode === "SHORT" && orderPrice <= currentPrice) { skipped++; continue; }
-```
-
----
-
-### 🟡 P2 — Map `recentOrders` tumbuh tanpa batas
-
-**Lokasi**: `botRunner.ts` baris 89, `isDuplicateOrder()` baris 214–219
-
-Map `recentOrders` mengakumulasi satu entri per pasangan level+sisi yang pernah dilihat. Tidak ada mekanisme pembersihan yang ada.
-
-**Perbaikan**: Di `isDuplicateOrder()`, hapus entri yang lebih lama dari `DUP_GUARD_MS`:
-```typescript
-private isDuplicateOrder(levelIdx: number, side: "BUY" | "SELL"): boolean {
-  const now = Date.now();
-  for (const [k, t] of this.recentOrders) {
-    if (now - t >= DUP_GUARD_MS) this.recentOrders.delete(k);
-  }
-  const key = `${levelIdx}:${side}`;
-  const last = this.recentOrders.get(key);
-  if (last !== undefined && now - last < DUP_GUARD_MS) return true;
-  this.recentOrders.set(key, now);
-  return false;
-}
-```
-
----
-
 ### 🟡 P2 — Ambiguitas `isBuy` pada event fill (verifikasi live)
 
 Didokumentasikan di bagian §4 di atas. Jika exchange mengirimkan `isBuy` dari perspektif taker, session P&L akan terbalik arahnya. Lakukan satu fill nyata di staging dan catat nilai `isBuy` yang diterima untuk order BUY limit yang diketahui.
@@ -257,6 +215,9 @@ Bot baru dibuat dengan `status: "IDLE"`. UI menampilkan badge untuk `RUNNING` da
 | `stop()` membatalkan semua order terbuka untuk simbol tersebut | ✅ |
 | Pengecekan SL/TP berjalan sebelum logika crossing | ✅ |
 | Pre-check `reduceOnly` memverifikasi posisi yang cocok sebelum kirim | ✅ |
+| Stats route filter status benar (FILLED/OPEN) | ✅ |
+| POST /bots menyimpan orderMode + stopLoss + takeProfit | ✅ |
+| PATCH /bots mengupdate orderMode + stopLoss + takeProfit | ✅ |
 
 ---
 
@@ -264,8 +225,19 @@ Bot baru dibuat dengan `status: "IDLE"`. UI menampilkan badge untuk `RUNNING` da
 
 | Tingkat | Jumlah | Keterangan |
 |---------|--------|-----------|
-| 🔴 P1 Kritis | 3 | REACTIVE profit nol, UPFRONT tidak ada pengisian ulang, UPFRONT level salah |
-| 🟡 P2 Sedang | 3 | Kebocoran Map, ketidaksesuaian IDLE/STOPPED, ambiguitas isBuy |
-| ✅ Diperbaiki | 7 | Sisi crossing, levelIdx, hasOpenOrderAt, totalTrades, sessionPnl, halaman logs, LogLine.msg |
+| 🔴 P1 Kritis | 0 | Semua P1 telah diselesaikan |
+| 🟡 P2 Sedang | 2 | Ambiguitas isBuy (verifikasi live), ketidaksesuaian IDLE/STOPPED |
+| ✅ Diperbaiki total | 15 | FIX-01 s/d FIX-15 |
 
-**Langkah berikutnya yang direkomendasikan**: Implementasikan pengisian ulang berbasis fill di `handleFill()` — satu perubahan ini memperbaiki P1-REACTIVE dan P1-UPFRONT sekaligus, sesuai dengan spesifikasi SKILL.md.
+**P1 yang telah diselesaikan sesi ini**:
+- P1-REACTIVE: fill-based replenishment (FIX-08)
+- P1-UPFRONT-REPLENISH: sama, via `scheduleReplenishment()` tanpa filter orderMode (FIX-08)
+- P1-UPFRONT-LEVEL: guard `orderPrice >= currentPrice` / `<= currentPrice` (FIX-09)
+- BUG-CREATE-FIELDS: POST /bots insert orderMode/stopLoss/takeProfit (FIX-11)
+- BUG-UPDATE-FIELDS: PATCH /bots/:id update orderMode/stopLoss/takeProfit (FIX-12)
+- BUG-STATS-FILTER: filledOrders WHERE status=FILLED, openOrders WHERE status=OPEN (FIX-13)
+
+**P2 yang telah diselesaikan sesi ini**:
+- P2-recentOrders: Map pruning di `isDuplicateOrder()` (FIX-10)
+- BUG-NEUTRAL-UPFRONT-BOUNDARY: skip level ±0.001 dari currentPrice (FIX-14)
+- BUG-REPLENISH-RACE: delay replenishment 400ms → 1500ms (FIX-15)
