@@ -1,4 +1,4 @@
-import { sizePerGrid } from "./gridEngine";
+import { sizePerGrid, snapToGridLevel } from "./gridEngine";
 import { buildAndSign, submitTransaction, cancelAllOrders } from "./signing";
 import { getEndpoint } from "./keys";
 
@@ -212,10 +212,15 @@ export class BotRunner {
    * Mirror: extendedBotEngine BUG-DUP-001 existingPending check
    */
   private isDuplicateOrder(levelIdx: number, side: "BUY" | "SELL"): boolean {
+    const now = Date.now();
+    // Prune stale entries — prevents Map from growing unboundedly (P2 memory leak fix)
+    for (const [k, t] of this.recentOrders) {
+      if (now - t >= DUP_GUARD_MS) this.recentOrders.delete(k);
+    }
     const key = `${levelIdx}:${side}`;
     const last = this.recentOrders.get(key);
-    if (last !== undefined && Date.now() - last < DUP_GUARD_MS) return true;
-    this.recentOrders.set(key, Date.now());
+    if (last !== undefined && now - last < DUP_GUARD_MS) return true;
+    this.recentOrders.set(key, now);
     return false;
   }
 
@@ -356,8 +361,12 @@ export class BotRunner {
 
       let side: "BUY" | "SELL";
       if (this.config.mode === "LONG") {
+        // LONG: only BUY below current price — orders above would cross immediately (aggressive fill)
+        if (orderPrice >= currentPrice) { skipped++; continue; }
         side = "BUY";
       } else if (this.config.mode === "SHORT") {
+        // SHORT: only SELL above current price — orders below would cross immediately (aggressive fill)
+        if (orderPrice <= currentPrice) { skipped++; continue; }
         side = "SELL";
       } else {
         // NEUTRAL: BUY below current price, SELL above
@@ -703,14 +712,25 @@ export class BotRunner {
     if (data.symbol !== this.config.symbol) return;
     const filledPrice = Number(data.price);
     const filledSize  = Number(data.size);
-    const isBuy       = Boolean(data.isBuy);
+    const isBuy       = Boolean(data.isBuy); // true = taker bought (taker's POV per docs)
+    const isMaker     = Boolean(data.maker); // true = our resting limit order was taken
     const fee         = Number(data.fee ?? 0);
+
+    // Determine our actual trade direction.
+    // Docs: "isBuy = true if taker bought"
+    // When WE are the MAKER (resting limit order hit by a taker):
+    //   taker bought our SELL limit  → isBuy=true  → WE SOLD
+    //   taker sold into our BUY limit → isBuy=false → WE BOUGHT
+    // When WE are the TAKER (aggressive/market order):
+    //   isBuy=true  → WE BOUGHT
+    //   isBuy=false → WE SOLD
+    const weBought = isMaker ? !isBuy : isBuy;
 
     // Accumulate session P&L from fills.
     // SELL fill = earned money; BUY fill = spent money.
     // Net = what the grid has actually made or lost this session, after fees.
     const tradeValue = filledPrice * filledSize;
-    if (isBuy) {
+    if (weBought) {
       this.sessionBuyValue += tradeValue;
     } else {
       this.sessionSellValue += tradeValue;
@@ -720,10 +740,87 @@ export class BotRunner {
 
     this.totalTrades++;
     this.log(
-      `Fill: ${isBuy ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)} ` +
-      `fee=${fee.toFixed(4)} | Session P&L: ${this.sessionPnl >= 0 ? "+" : ""}$${this.sessionPnl.toFixed(4)}`
+      `Fill: ${weBought ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)} ` +
+      `${isMaker ? "(maker)" : "(taker)"} fee=${fee.toFixed(4)} | ` +
+      `Session P&L: ${this.sessionPnl >= 0 ? "+" : ""}$${this.sessionPnl.toFixed(4)}`
     );
+
+    // Fill-based replenishment: place the opposite side one grid step away.
+    // BUY filled → place SELL one level above (profit on price recovery)
+    // SELL filled → place BUY one level below (profit on price recovery)
+    this.scheduleReplenishment(filledPrice, weBought);
+
     this.onUpdate?.();
+  }
+
+  /**
+   * Schedule a fill-based replenishment order with a short delay.
+   * The delay gives the exchange time to update open-orders before LIVE-ORDER-CHECK runs.
+   */
+  private scheduleReplenishment(filledPrice: number, weBought: boolean): void {
+    if (!this.running) return;
+    const replenishSide: "BUY" | "SELL" = weBought ? "SELL" : "BUY";
+    const rawPrice = weBought
+      ? filledPrice + this.gridSpacing
+      : filledPrice - this.gridSpacing;
+    const replenishPrice = snapToGridLevel(rawPrice, this.config.lowerPrice, this.config.upperPrice, this.config.gridCount);
+
+    // Sanity: snap must land strictly on the correct side of the fill
+    if (weBought  && replenishPrice <= filledPrice) return;
+    if (!weBought && replenishPrice >= filledPrice) return;
+
+    setTimeout(() => void this.placeReplenishOrder(replenishSide, replenishPrice), 400);
+  }
+
+  /**
+   * Place a replenishment limit order after a fill.
+   * Applies all existing guards: bounds, LIVE-ORDER-CHECK, DUP-GUARD, position pre-check.
+   */
+  private async placeReplenishOrder(side: "BUY" | "SELL", price: number): Promise<void> {
+    if (!this.running) return;
+    if (price < this.config.lowerPrice || price > this.config.upperPrice) return;
+
+    // LIVE-ORDER-CHECK
+    if (this.hasOpenOrderAt(price)) {
+      this.log(`Skip replenish ${side} @ ${price.toFixed(2)}: resting order already exists`);
+      return;
+    }
+
+    // DUP-GUARD
+    const levelIdx = Math.round((price - this.config.lowerPrice) / this.gridSpacing);
+    if (this.isDuplicateOrder(levelIdx, side)) {
+      this.log(`Skip replenish ${side} @ ${price.toFixed(2)}: duplicate guard active`);
+      return;
+    }
+
+    const size = sizePerGrid(this.config.investment, this.config.gridCount, price, this.config.leverage);
+    if (size <= 0) return;
+
+    // GRID-REDUCEONLY-PRECHECK
+    const reduceOnly = this.computeReduceOnly(side);
+    if (reduceOnly) {
+      const pos = this.position;
+      const hasPos = side === "SELL" ? pos !== null && pos.size > 0 : pos !== null && pos.size < 0;
+      if (!hasPos) {
+        this.log(`Skip replenish ${side} (reduceOnly): tidak ada posisi yang sesuai`);
+        return;
+      }
+    }
+
+    const tx = buildAndSign(
+      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price, size, tif: "GTC", reduceOnly, iso: true }],
+      this.config.accountPubkey,
+      this.config.privateKey
+    );
+
+    const result = await submitTransaction(tx, PROXY_API, getEndpoint());
+    if (result.ok) {
+      const st = result.statuses?.[0] as any;
+      const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
+      this.log(`✓ Replenish ${side} ${size.toFixed(6)} @ ${price.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
+    } else {
+      this.log(`✗ Replenish ${side} @ ${price.toFixed(2)}: ${result.error}`);
+    }
   }
 
   private parsePosition(p: any): PositionData {
