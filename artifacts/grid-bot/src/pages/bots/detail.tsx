@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Play, Square, Terminal } from "lucide-react";
+import { Play, Square, Terminal, Pencil } from "lucide-react";
+import { Link } from "wouter";
 import { calculateGridLevels, sizePerGrid } from "@/lib/gridEngine";
 import { BotRunner, type BotConfig, type LogLine, type MarginData, type PositionData, type LiveOrder } from "@/lib/botRunner";
 import { getPrivateKey } from "@/lib/keys";
@@ -256,17 +257,29 @@ export default function BotDetail() {
             <p className="text-muted-foreground">
               {bot.mode} Strategy • {bot.gridCount} Grids • ${bot.investment} Investment • {bot.leverage}x Leverage
             </p>
+            <p className="text-sm font-mono text-muted-foreground/70 mt-1">
+              Range: {bot.lowerPrice} – {bot.upperPrice}
+            </p>
           </div>
 
-          {bot.status === "RUNNING" ? (
-            <Button size="lg" variant="destructive" onClick={handleStop} disabled={stopBot.isPending}>
-              <Square className="w-4 h-4 mr-2" /> Stop Bot
-            </Button>
-          ) : (
-            <Button size="lg" onClick={handleStart} disabled={startBot.isPending}>
-              <Play className="w-4 h-4 mr-2" /> Start Bot
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {bot.status !== "RUNNING" && (
+              <Link href={`/bots/${botId}/edit`}>
+                <Button size="lg" variant="outline">
+                  <Pencil className="w-4 h-4 mr-2" /> Edit
+                </Button>
+              </Link>
+            )}
+            {bot.status === "RUNNING" ? (
+              <Button size="lg" variant="destructive" onClick={handleStop} disabled={stopBot.isPending}>
+                <Square className="w-4 h-4 mr-2" /> Stop Bot
+              </Button>
+            ) : (
+              <Button size="lg" onClick={handleStart} disabled={startBot.isPending}>
+                <Play className="w-4 h-4 mr-2" /> Start Bot
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-6">

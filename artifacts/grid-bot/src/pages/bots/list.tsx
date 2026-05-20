@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function BotList() {
@@ -103,6 +103,13 @@ export default function BotList() {
                       {bot.totalPnl ? `${bot.totalPnl >= 0 ? "+" : ""}${bot.totalPnl.toFixed(2)}` : "-"}
                     </TableCell>
                     <TableCell className="text-right z-20 relative">
+                      {bot.status !== "RUNNING" && (
+                        <Link href={`/bots/${bot.id}/edit`} onClick={(e) => e.stopPropagation()} className="relative z-20">
+                          <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-primary">
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        </Link>
+                      )}
                       <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-destructive" onClick={(e) => handleDelete(bot.id, e)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>

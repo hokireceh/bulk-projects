@@ -7,6 +7,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import BotList from "@/pages/bots/list";
 import CreateBot from "@/pages/bots/create";
+import EditBot from "@/pages/bots/edit";
 import BotDetail from "@/pages/bots/detail";
 import Settings from "@/pages/settings";
 
@@ -18,6 +19,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/bots" component={BotList} />
       <Route path="/bots/new" component={CreateBot} />
+      <Route path="/bots/:id/edit" component={EditBot} />
       <Route path="/bots/:id" component={BotDetail} />
       <Route path="/settings" component={Settings} />
       <Route component={NotFound} />
