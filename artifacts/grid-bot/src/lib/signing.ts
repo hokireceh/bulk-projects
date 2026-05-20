@@ -133,8 +133,8 @@ function actionToJson(action: BulkAction): unknown {
       l: {
         c: action.symbol,
         b: action.isBuy,
-        px: action.price,
-        sz: action.size,
+        px: String(action.price),
+        sz: String(action.size),
         tif: action.tif ?? "GTC",
         r: action.reduceOnly ?? false,
         i: action.iso ?? false,
