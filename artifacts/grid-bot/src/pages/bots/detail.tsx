@@ -238,8 +238,10 @@ export default function BotDetail() {
     }
   };
 
-  const displayedRealizedPnl   = position?.realizedPnl   ?? margin?.realizedPnl   ?? null;
-  const displayedUnrealizedPnl = position?.unrealizedPnl ?? margin?.unrealizedPnl ?? null;
+  // Only use position-level P&L (symbol-specific). Never fall back to account margin
+  // because margin.realizedPnl is the total for all symbols, not this bot.
+  const displayedRealizedPnl   = position?.realizedPnl   ?? null;
+  const displayedUnrealizedPnl = position?.unrealizedPnl ?? null;
   const totalPnl = displayedRealizedPnl !== null
     ? displayedRealizedPnl + (displayedUnrealizedPnl ?? 0)
     : null;
