@@ -251,26 +251,28 @@ export default function BotDetail() {
             </div>
 
             {/* Bot Logs */}
-            {logs.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-sm">
-                    <Terminal className="h-4 w-4" /> Bot Logs
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-background rounded-md border border-border p-3 h-36 overflow-y-auto font-mono text-xs space-y-0.5">
-                    {logs.map((l, i) => (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Terminal className="h-4 w-4" /> Bot Logs
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="bg-background rounded-md border border-border p-3 h-36 overflow-y-auto font-mono text-xs space-y-0.5">
+                  {logs.length === 0 ? (
+                    <div className="text-muted-foreground/50 text-center mt-12">No logs yet.</div>
+                  ) : (
+                    logs.map((l, i) => (
                       <div key={i} className="text-muted-foreground leading-snug">
                         <span className="text-border mr-2">{new Date(l.ts).toLocaleTimeString()}</span>
                         <span>{l.msg}</span>
                       </div>
-                    ))}
-                    <div ref={logsEndRef} />
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+                    ))
+                  )}
+                  <div ref={logsEndRef} />
+                </div>
+              </CardContent>
+            </Card>
 
             {/* Orders Table */}
             <Card>
