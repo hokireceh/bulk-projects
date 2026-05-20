@@ -250,12 +250,12 @@ export default function BotDetail() {
 
   return (
     <Layout>
-      <div className="p-8 space-y-6">
+      <div className="p-4 md:p-8 space-y-4 md:space-y-6">
         {/* Header */}
-        <div className="flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <h2 className="text-3xl font-bold tracking-tight">{bot.name}</h2>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <h2 className="text-2xl md:text-3xl font-bold tracking-tight">{bot.name}</h2>
               <Badge variant="outline" className={getStatusColor(bot.status)}>
                 {bot.status === "RUNNING" && (
                   <span className="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse" />
@@ -266,37 +266,41 @@ export default function BotDetail() {
                 {bot.symbol}
               </Badge>
             </div>
-            <p className="text-muted-foreground">
-              {bot.mode} Strategy • {bot.gridCount} Grids • ${bot.investment} Investment • {bot.leverage}x Leverage
+            <p className="text-muted-foreground text-sm">
+              {bot.mode} • {bot.gridCount} Grids • ${bot.investment} • {bot.leverage}x
             </p>
-            <p className="text-sm font-mono text-muted-foreground/70 mt-1">
-              Range: {bot.lowerPrice} – {bot.upperPrice}
+            <p className="text-xs font-mono text-muted-foreground/60 mt-0.5">
+              {bot.lowerPrice} – {bot.upperPrice}
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {bot.status !== "RUNNING" && (
               <Link href={`/bots/${botId}/edit`}>
-                <Button size="lg" variant="outline">
-                  <Pencil className="w-4 h-4 mr-2" /> Edit
+                <Button size="sm" variant="outline">
+                  <Pencil className="w-4 h-4 md:mr-2" />
+                  <span className="hidden md:inline">Edit</span>
                 </Button>
               </Link>
             )}
             {bot.status === "RUNNING" ? (
-              <Button size="lg" variant="destructive" onClick={handleStop} disabled={stopBot.isPending}>
-                <Square className="w-4 h-4 mr-2" /> Stop Bot
+              <Button size="sm" variant="destructive" onClick={handleStop} disabled={stopBot.isPending}>
+                <Square className="w-4 h-4 md:mr-2" />
+                <span className="hidden md:inline">Stop Bot</span>
               </Button>
             ) : (
-              <Button size="lg" onClick={handleStart} disabled={startBot.isPending}>
-                <Play className="w-4 h-4 mr-2" /> Start Bot
+              <Button size="sm" onClick={handleStart} disabled={startBot.isPending}>
+                <Play className="w-4 h-4 md:mr-2" />
+                <span className="hidden md:inline">Start Bot</span>
               </Button>
             )}
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-6">
+        {/* Grid + Stats — stacked on mobile, side by side on desktop */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
           {/* Grid Visualization */}
-          <Card className="col-span-1 border-primary/20">
+          <Card className="lg:col-span-1 border-primary/20">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Grid Levels</CardTitle>
@@ -346,9 +350,9 @@ export default function BotDetail() {
           </Card>
 
           {/* Right column */}
-          <div className="col-span-2 space-y-4">
+          <div className="lg:col-span-2 space-y-4">
             {/* Stats row */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-3 gap-3">
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Total P&L</CardTitle>

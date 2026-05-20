@@ -16,26 +16,21 @@ function TickerCell({ symbol }: { symbol: string }) {
     },
   });
 
-  if (isLoading) return <Skeleton className="h-4 w-24" />;
+  if (isLoading) return <Skeleton className="h-4 w-20 ml-auto" />;
   if (!ticker) return <span className="text-muted-foreground">—</span>;
 
   const change = ticker.priceChangePercent ?? 0;
   const isUp = change >= 0;
 
   return (
-    <div className="flex items-center gap-3 justify-end">
+    <div className="flex items-center gap-2 justify-end">
       <div className="text-right">
-        <div className="font-mono font-bold tabular-nums">
+        <div className="font-mono font-bold tabular-nums text-sm">
           ${ticker.markPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </div>
-        {ticker.lastPrice !== ticker.markPrice && (
-          <div className="text-xs text-muted-foreground font-mono">
-            Last: ${ticker.lastPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        )}
       </div>
-      <div className={`text-sm font-medium tabular-nums ${isUp ? "text-green-500" : "text-red-500"}`}>
-        {isUp ? <TrendingUp className="inline h-3.5 w-3.5 mr-1" /> : <TrendingDown className="inline h-3.5 w-3.5 mr-1" />}
+      <div className={`text-xs font-medium tabular-nums ${isUp ? "text-green-500" : "text-red-500"}`}>
+        {isUp ? <TrendingUp className="inline h-3 w-3 mr-0.5" /> : <TrendingDown className="inline h-3 w-3 mr-0.5" />}
         {isUp ? "+" : ""}{change.toFixed(2)}%
       </div>
     </div>
@@ -54,10 +49,10 @@ export default function Markets() {
 
   return (
     <Layout>
-      <div className="p-8 space-y-6">
+      <div className="p-4 md:p-8 space-y-4 md:space-y-6">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Markets</h2>
-          <p className="text-muted-foreground">Live prices from Bulk.trade perpetual futures.</p>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Markets</h2>
+          <p className="text-muted-foreground text-sm">Live prices from Bulk.trade perpetual futures.</p>
         </div>
 
         <div className="relative max-w-sm">
@@ -72,8 +67,8 @@ export default function Markets() {
 
         <Card className="overflow-hidden">
           <div className="divide-y divide-border">
-            {/* Header */}
-            <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide bg-muted/30">
+            {/* Header — hide detail columns on mobile */}
+            <div className="hidden md:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide bg-muted/30">
               <span>Market</span>
               <span className="text-right">Max Leverage</span>
               <span className="text-right">Tick Size</span>
@@ -81,16 +76,17 @@ export default function Markets() {
               <span className="text-right">Min Notional</span>
               <span className="text-right">Mark Price / 24h</span>
             </div>
+            {/* Mobile header */}
+            <div className="md:hidden grid grid-cols-[1fr_auto] gap-4 px-4 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wide bg-muted/30">
+              <span>Market</span>
+              <span className="text-right">Price / 24h</span>
+            </div>
 
             {isLoading ? (
               Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-4">
-                  <Skeleton className="h-5 w-32" />
-                  <Skeleton className="h-5 w-16 ml-auto" />
-                  <Skeleton className="h-5 w-16 ml-auto" />
-                  <Skeleton className="h-5 w-16 ml-auto" />
-                  <Skeleton className="h-5 w-16 ml-auto" />
-                  <Skeleton className="h-5 w-28 ml-auto" />
+                <div key={i} className="px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-4">
+                  <Skeleton className="h-5 w-24" />
+                  <Skeleton className="h-5 w-24" />
                 </div>
               ))
             ) : filtered.length === 0 ? (
@@ -99,28 +95,42 @@ export default function Markets() {
               </div>
             ) : (
               filtered.map(market => (
-                <div
-                  key={market.symbol}
-                  className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-4 hover:bg-muted/20 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div>
-                      <div className="font-semibold">{market.symbol}</div>
-                      <div className="text-xs text-muted-foreground">{market.baseAsset} / {market.quoteAsset}</div>
+                <div key={market.symbol}>
+                  {/* Mobile row */}
+                  <div className="md:hidden flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/20 transition-colors">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div>
+                        <div className="font-semibold text-sm">{market.symbol}</div>
+                        <div className="text-xs text-muted-foreground">{market.maxLeverage}x lev · {market.baseAsset}/{market.quoteAsset}</div>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-500 border-green-500/20 shrink-0">
+                        LIVE
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-500 border-green-500/20">
-                      LIVE
-                    </Badge>
-                  </div>
-                  <div className="text-right font-mono text-sm">{market.maxLeverage}x</div>
-                  <div className="text-right font-mono text-sm text-muted-foreground">{market.tickSize}</div>
-                  <div className="text-right font-mono text-sm text-muted-foreground">{market.lotSize}</div>
-                  <div className="text-right font-mono text-sm text-muted-foreground">
-                    {market.minNotional != null ? `$${market.minNotional}` : "—"}
-                  </div>
-                  <CardContent className="p-0">
                     <TickerCell symbol={market.symbol} />
-                  </CardContent>
+                  </div>
+
+                  {/* Desktop row */}
+                  <div className="hidden md:grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-4 px-6 py-4 hover:bg-muted/20 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <div className="font-semibold">{market.symbol}</div>
+                        <div className="text-xs text-muted-foreground">{market.baseAsset} / {market.quoteAsset}</div>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-500 border-green-500/20">
+                        LIVE
+                      </Badge>
+                    </div>
+                    <div className="text-right font-mono text-sm">{market.maxLeverage}x</div>
+                    <div className="text-right font-mono text-sm text-muted-foreground">{market.tickSize}</div>
+                    <div className="text-right font-mono text-sm text-muted-foreground">{market.lotSize}</div>
+                    <div className="text-right font-mono text-sm text-muted-foreground">
+                      {market.minNotional != null ? `$${market.minNotional}` : "—"}
+                    </div>
+                    <CardContent className="p-0">
+                      <TickerCell symbol={market.symbol} />
+                    </CardContent>
+                  </div>
                 </div>
               ))
             )}

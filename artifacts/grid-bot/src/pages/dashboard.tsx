@@ -73,14 +73,14 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <div className="p-8 space-y-8">
+      <div className="p-4 md:p-8 space-y-6 md:space-y-8">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-          <p className="text-muted-foreground">Overview of your grid trading performance.</p>
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
+          <p className="text-muted-foreground text-sm">Overview of your grid trading performance.</p>
         </div>
 
         {/* Bot Stats */}
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-3 grid-cols-2 md:grid-cols-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Active Bots</CardTitle>
@@ -99,7 +99,7 @@ export default function Dashboard() {
               <div className="text-2xl font-bold">${totalInvestment.toFixed(2)}</div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="col-span-2 md:col-span-1">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Account P&L</CardTitle>
               <ArrowUpRight className="h-4 w-4 text-muted-foreground" />
@@ -148,7 +148,7 @@ export default function Dashboard() {
               </CardContent>
             </Card>
           ) : (
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
               {(["Total Balance", "Available Balance", "Margin Used", "Unrealized P&L"] as const).map((label, i) => {
                 const values = balance
                   ? [balance.totalBalance, balance.availableBalance, balance.marginUsed, balance.unrealizedPnl]
