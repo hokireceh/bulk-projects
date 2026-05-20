@@ -449,7 +449,11 @@ export class BotRunner {
 
       const levelsMoved = currentLevel - this.lastLevel;
       const direction = levelsMoved < 0 ? "down" : "up";
-      const side: "BUY" | "SELL" = levelsMoved < 0 ? "BUY" : "SELL";
+      // Grid replenishment logic:
+      // Price rose  → place BUY  at crossed levels (now below current = resting buy-on-dip orders)
+      // Price fell  → place SELL at crossed levels (now above current = resting sell-on-bounce orders)
+      // This ensures limit orders always rest on the book rather than crossing immediately.
+      const side: "BUY" | "SELL" = levelsMoved < 0 ? "SELL" : "BUY";
       const reduceOnly = this.computeReduceOnly(side);
 
       const prevLevel = this.lastLevel;
