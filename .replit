@@ -7,19 +7,6 @@ expertMode = true
 runButton = "Project"
 
 [[workflows.workflow]]
-name = "Bulk Projects"
-mode = "parallel"
-author = 49633054
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "web view"
-
-[[workflows.workflow]]
 name = "Project"
 mode = "parallel"
 author = "agent"
@@ -64,3 +51,7 @@ PORT = "8080"
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
