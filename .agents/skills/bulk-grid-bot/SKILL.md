@@ -61,8 +61,8 @@ Browser (React + Vite, port 24830)
 | `artifacts/grid-bot/src/pages/bots/create.tsx` | Create bot form |
 | `artifacts/grid-bot/src/pages/bots/edit.tsx` | Edit bot form |
 | `artifacts/grid-bot/src/pages/bots/detail.tsx` | Bot detail + grid visualization + start/stop |
-| `artifacts/grid-bot/src/pages/markets.tsx` | Live markets overview |
-| `artifacts/grid-bot/src/pages/dashboard.tsx` | Dashboard with live P&L from account API |
+| `artifacts/grid-bot/src/pages/logs.tsx` | Real-time trading logs per bot (replaces markets page) |
+| `artifacts/grid-bot/src/pages/dashboard.tsx` | Dashboard with session P&L from fills |
 
 ---
 
@@ -109,7 +109,10 @@ Message structure — all updates are wrapped:
 { "type": "account", "data": { "type": "fill|orderUpdate|marginUpdate|...", ... } }
 ```
 Fill event fields: `symbol`, `orderId`, `price`, `size`, `fee`, `isBuy`, `reasonCode`, `maker`, `timestamp`
-OrderUpdate compact fields: `sym` (not `symbol`), `fillSz`, `origSz`, `sz`, `px`, `oid`, `status`
+
+⚠️ `isBuy` ambiguity: docs define it as "true if TAKER bought". For our resting BUY limit orders (maker), when a taker sells against us, `isBuy` may be `false`. Verify with a live staging fill before relying on session P&L direction.
+
+OrderUpdate compact fields: `sym` (not `symbol`), `fillSz`, `origSz` **(signed: negative=sell)**, `sz`, `px`, `oid`, `status`
 
 ---
 
@@ -118,23 +121,88 @@ OrderUpdate compact fields: `sym` (not `symbol`), `fillSz`, `origSz`, `sz`, `px`
 ### Grid Calculation (`gridEngine.ts`)
 ```
 step = (upperPrice - lowerPrice) / gridCount
-levels = lowerPrice + i * step  for i in 0..gridCount
+levels[i] = lowerPrice + i * step  (i in 0..gridCount, inclusive)
 LONG:    place BUY below currentPrice only
 SHORT:   place SELL above currentPrice only
 NEUTRAL: place BUY below, SELL above currentPrice
 ```
 
-### Bot Lifecycle (`botRunner.ts`)
-1. Fetch mark price from `/api/markets/:symbol/ticker`
-2. Cancel all existing orders for the symbol
-3. Calculate grid levels → place all orders at once
-4. Connect WebSocket account stream
-5. On fill: replenish — filled BUY → place SELL one step up; filled SELL → place BUY one step down
-
 ### Order Size
 ```
 size = (investment * leverage / gridCount) / price
 ```
+
+### Bot Lifecycle — UPFRONT mode
+1. Fetch mark price from `/api/markets/:symbol/ticker`
+2. Cancel all existing orders for the symbol
+3. Place limit orders at all N grid levels immediately:
+   - LONG: BUY at every level **below** current price
+   - SHORT: SELL at every level **above** current price
+   - NEUTRAL: BUY below, SELL above
+4. Connect WebSocket account stream
+5. Monitor SL/TP only — no replenishment (⚠️ known P1 gap — see audit-botRunner.md)
+
+### Bot Lifecycle — REACTIVE mode (default)
+1. Fetch mark price → set baseline level
+2. Cancel all existing orders
+3. Connect WebSocket account stream
+4. Start price poller (5s interval)
+5. On level crossing UP (price moved to higher band) → place resting BUY orders at the crossed levels (below current)
+6. On level crossing DOWN (price moved to lower band) → place resting SELL orders at the crossed levels (above current)
+7. SL/TP checked every tick before crossing logic
+
+⚠️ **Known P1 gap**: BUY and SELL orders land at the same price boundary (level N base) for the same band. A tight 1-level bounce is zero-profit (only fees paid). Fill-based replenishment (see SKILL.md spec below and audit-botRunner.md) is NOT yet implemented.
+
+### Intended fill-based replenishment (not yet implemented)
+Per SKILL.md spec — this is the correct behavior that should be added:
+- **filled BUY at price P** → place SELL at `snapToGridLevel(P + gridSpacing)` (one level up)
+- **filled SELL at price P** → place BUY at `snapToGridLevel(P - gridSpacing)` (one level down)
+- This guarantees profit = spacing × size − fees per round trip
+
+---
+
+## Session P&L
+
+`BotRunner` tracks session P&L from fills only. Resets to 0 on every `start()`.
+
+```typescript
+sessionPnl = sessionSellValue − sessionBuyValue − sessionFees
+// where:
+// sessionSellValue = Σ(SELL fill price × fill size)
+// sessionBuyValue  = Σ(BUY fill price × fill size)
+// sessionFees      = Σ(fee per fill)
+```
+
+Do NOT use `margin.realizedPnl` from the exchange for per-bot P&L — it is a historical account total since account creation and does not reset per bot session.
+
+---
+
+## DB Schema
+
+```sql
+bots (
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL,
+  symbol        TEXT NOT NULL,
+  mode          ENUM('LONG','SHORT','NEUTRAL') NOT NULL,
+  order_mode    ENUM('UPFRONT','REACTIVE') NOT NULL DEFAULT 'REACTIVE',
+  lower_price   REAL NOT NULL,
+  upper_price   REAL NOT NULL,
+  grid_count    INT NOT NULL,
+  investment    REAL NOT NULL,
+  leverage      INT DEFAULT 1,
+  stop_loss     REAL,           -- null = disabled
+  take_profit   REAL,           -- null = disabled
+  account_pubkey TEXT NOT NULL,
+  status        ENUM('IDLE','RUNNING','STOPPED','ERROR') DEFAULT 'IDLE',
+  total_pnl     REAL,           -- NOT updated live; use sessionPnl from BotRunner
+  total_trades  INT,            -- NOT updated live; use runner.totalTrades
+  created_at    TIMESTAMP DEFAULT NOW(),
+  updated_at    TIMESTAMP DEFAULT NOW()
+)
+```
+
+Status lifecycle: `IDLE` (newly created) → `RUNNING` (on start) → `STOPPED` (on stop) | `ERROR`.
 
 ---
 
@@ -146,7 +214,12 @@ size = (investment * leverage / gridCount) / price
 | Grid prices jumping wildly (e.g. 76→3945→7814) | Indonesian browser locale: "77.456" read as 77456 | Price inputs use `type="text"` + `parseLocaleNumber()` that handles both `,` and `.` as decimal |
 | Faucet CORS error | Frontend calling bulk.trade directly | Route through `/api/faucet` proxy |
 | Faucet wrong encoding | Wrong field name `amount` instead of `u`, missing 32-byte pubkey in binary | See `signing.ts` faucet section |
-| P&L showing $0.00 | Dashboard read `bot.totalPnl` from DB (never updated) | Dashboard now uses live `balance.realizedPnl + unrealizedPnl` from account API |
+| Session P&L showing $0 | Dashboard read `margin.realizedPnl` (historical exchange total) | Dashboard now uses `sessionPnl` from BotRunner fills, reset each start() |
+| Orders filled immediately (not resting) | REACTIVE crossing side inverted: UP→SELL, DOWN→BUY | Fixed: UP→BUY (resting below), DOWN→SELL (resting above) |
+| SELL orders placed below current price | levelIdx formula for DOWN was `prevLevel-i-1` | Fixed: `currentLevel+i+1` → SELL always above current price |
+| Duplicate resting orders draining margin | No live-order deduplication on rapid bounces | Added `hasOpenOrderAt()` check before each order |
+| totalTrades counting rejected orders | `totalTrades++` was in order placement loop | Moved to `handleFill()` — counts confirmed fills only |
+| `LogLine.text` TS error in logs.tsx | `LogLine = { ts, msg }` not `{ ts, text }` | Fixed to use `.msg` throughout |
 | Bot name/range not matching | DB stores old data, no edit feature | Edit bot page at `/bots/:id/edit` (stop bot first) |
 
 ---
@@ -160,29 +233,6 @@ Price inputs must use `type="text"` with `parseLocaleNumber()` (in create.tsx an
 
 ---
 
-## Database Schema
-
-```sql
-bots (
-  id            SERIAL PRIMARY KEY,
-  name          TEXT NOT NULL,
-  symbol        TEXT NOT NULL,
-  mode          ENUM('LONG','SHORT','NEUTRAL') NOT NULL,
-  lower_price   REAL NOT NULL,
-  upper_price   REAL NOT NULL,
-  grid_count    INT NOT NULL,
-  investment    REAL NOT NULL,
-  leverage      INT DEFAULT 1,
-  account_pubkey TEXT NOT NULL,
-  status        ENUM('STOPPED','RUNNING','ERROR') DEFAULT 'STOPPED',
-  total_pnl     REAL,         -- NOTE: not updated from live; use account API for live P&L
-  created_at    TIMESTAMP DEFAULT NOW(),
-  updated_at    TIMESTAMP DEFAULT NOW()
-)
-```
-
----
-
 ## Audit Checklist
 
 Run this when auditing before a session or after major changes:
@@ -193,21 +243,33 @@ Run this when auditing before a session or after major changes:
 [ ] API server responds: curl http://localhost:8080/api/bots
 [ ] Frontend loads: check port 24830
 [ ] Signing: nonce is nanoseconds (BigInt(Date.now()) * 1_000_000n)
-[ ] Signing: all order actions have i=true (isolated margin)
+[ ] Signing: all order actions have iso=true (isolated margin) in both binary and JSON
+[ ] Signing: reduceOnly correct per mode (LONG+SELL=true, SHORT+BUY=true, NEUTRAL=false)
 [ ] Price inputs: use type="text" not type="number"
 [ ] All external API calls go through /api proxy, never direct from browser
 [ ] Private key never sent to backend (check network tab)
 [ ] Bot edit page: requires bot to be STOPPED first
-[ ] Dashboard P&L: reads from live account API, not DB
+[ ] Dashboard Session P&L: reads from BotRunner.sessionPnl (fills-based), not DB or exchange margin
+[ ] REACTIVE crossing: UP→BUY (resting below current), DOWN→SELL (resting above current)
+[ ] Fill-based replenishment: NOT yet implemented — see audit-botRunner.md P1 issues
+[ ] WS isBuy field: verify with live fill that direction matches account perspective
 ```
+
+---
+
+## Known P1 Gaps (open — see audit-botRunner.md for details)
+
+1. **REACTIVE zero-profit**: BUY and SELL land at same price boundary. Fill-based replenishment not implemented.
+2. **UPFRONT no replenishment**: Filled orders are not replaced. Grid depletes over time.
+3. **UPFRONT LONG/SHORT wrong levels**: Places orders at all levels including above/below current price (should skip aggressive side).
 
 ---
 
 ## Nav Structure
 
 ```
-/ (Dashboard)       — live P&L, account balance, running bots
-/markets            — all trading pairs with live prices
+/ (Dashboard)       — session P&L total, account balance, running bots
+/logs               — real-time trading logs per bot (color-coded, sorted by time)
 /bots               — bot list (edit + delete)
 /bots/new           — create bot
 /bots/:id           — bot detail (grid viz, logs, orders, start/stop, edit button)
