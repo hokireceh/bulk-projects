@@ -195,12 +195,9 @@ export default function Dashboard() {
             <div className="space-y-4">
               {botsArray.filter(b => b.status === "RUNNING").map(bot => {
                 const runner = getRunner(bot.id);
-                const pos = runner?.position;
-                // Only use per-symbol position P&L — never fall back to margin.realizedPnl
-                // which is the total account P&L and would show the same number for all bots.
-                const botPnl = pos != null
-                  ? (pos.realizedPnl ?? 0) + (pos.unrealizedPnl ?? 0)
-                  : null;
+                // Use session P&L from actual fills — the only accurate per-bot metric.
+                // null means bot is not running or has had zero fills this session.
+                const botPnl = runner != null ? runner.sessionPnl : null;
                 return (
                   <Link key={bot.id} href={`/bots/${bot.id}`}>
                     <Card className="hover:bg-muted/50 transition-colors cursor-pointer">

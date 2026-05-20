@@ -45,6 +45,8 @@ export default function BotDetail() {
   const [position, setPosition] = useState<PositionData | null>(null);
   const [liveOrders, setLiveOrders] = useState<LiveOrder[]>([]);
   const [totalTrades, setTotalTrades] = useState(0);
+  const [sessionPnl, setSessionPnl] = useState<number | null>(null);
+  const [sessionFees, setSessionFees] = useState(0);
   const [runnerPrice, setRunnerPrice] = useState(0);
   const [lastLevel, setLastLevel] = useState<number | null>(null);
 
@@ -71,6 +73,8 @@ export default function BotDetail() {
     if (runner.position) setPosition({ ...runner.position });
     setLiveOrders([...runner.openOrders]);
     setTotalTrades(runner.totalTrades);
+    setSessionPnl(runner.sessionPnl);
+    setSessionFees(runner.sessionFees);
     if (runner.currentPrice > 0) setRunnerPrice(runner.currentPrice);
     setLastLevel(runner.lastLevel ?? null);
   }, [botId, getRunner]);
@@ -239,13 +243,11 @@ export default function BotDetail() {
     }
   };
 
-  // Only use position-level P&L (symbol-specific). Never fall back to account margin
-  // because margin.realizedPnl is the total for all symbols, not this bot.
-  const displayedRealizedPnl   = position?.realizedPnl   ?? null;
+  // Session P&L: computed from actual fills this session (SELL value − BUY value − fees).
+  // This is the only accurate per-bot P&L number. The exchange margin/position realizedPnl
+  // is a historical account-level figure that predates this session and never resets.
+  // Unrealized P&L from the position is still shown as live mark-to-market info.
   const displayedUnrealizedPnl = position?.unrealizedPnl ?? null;
-  const totalPnl = displayedRealizedPnl !== null
-    ? displayedRealizedPnl + (displayedUnrealizedPnl ?? 0)
-    : null;
 
   if (isLoading || !bot) return <Layout><div className="p-8">Loading...</div></Layout>;
 
@@ -356,22 +358,24 @@ export default function BotDetail() {
             <div className="grid grid-cols-3 gap-3">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total P&L</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Session P&L</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {totalPnl !== null ? (
-                    <div className={`text-2xl font-bold ${totalPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
-                      {totalPnl >= 0 ? "+" : ""}${totalPnl.toFixed(4)}
+                  {sessionPnl !== null ? (
+                    <div className={`text-2xl font-bold ${sessionPnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                      {sessionPnl >= 0 ? "+" : ""}${sessionPnl.toFixed(4)}
                     </div>
                   ) : (
                     <div className="text-2xl font-bold text-muted-foreground">—</div>
                   )}
-                  {displayedRealizedPnl !== null && displayedUnrealizedPnl !== null && (
-                    <div className="text-[10px] text-muted-foreground mt-1 space-x-2">
-                      <span>Real: <span className={displayedRealizedPnl >= 0 ? "text-green-400" : "text-red-400"}>${displayedRealizedPnl.toFixed(4)}</span></span>
+                  <div className="text-[10px] text-muted-foreground mt-1 space-x-2">
+                    {sessionFees > 0 && (
+                      <span>Fees: <span className="text-red-400">-${sessionFees.toFixed(4)}</span></span>
+                    )}
+                    {displayedUnrealizedPnl !== null && (
                       <span>Unreal: <span className={displayedUnrealizedPnl >= 0 ? "text-green-400" : "text-red-400"}>${displayedUnrealizedPnl.toFixed(4)}</span></span>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 

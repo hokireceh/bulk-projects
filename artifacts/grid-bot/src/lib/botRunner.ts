@@ -106,6 +106,15 @@ export class BotRunner {
   public openOrders: LiveOrder[] = [];
   public totalTrades = 0;
 
+  // Session P&L: computed from actual fills during this bot session.
+  // sessionPnl = Σ(SELL fills) − Σ(BUY fills) − Σ(fees)
+  // This is the only accurate per-bot P&L — exchange margin.realizedPnl is
+  // a historical account-total that predates the bot and never resets per session.
+  public sessionPnl      = 0;
+  public sessionFees     = 0;
+  public sessionSellValue = 0;
+  public sessionBuyValue  = 0;
+
   constructor(private config: BotConfig, onUpdate?: () => void, onStopped?: () => void) {
     this.onUpdate  = onUpdate;
     this.onStopped = onStopped;
@@ -250,6 +259,10 @@ export class BotRunner {
     this.running = true;
     this.logs = [];
     this.totalTrades = 0;
+    this.sessionPnl       = 0;
+    this.sessionFees      = 0;
+    this.sessionSellValue = 0;
+    this.sessionBuyValue  = 0;
     this.log(`Starting bot #${this.config.botId} [${this.config.symbol}] mode=${this.config.mode}`);
 
     if (!this.config.gridCount || this.config.lowerPrice >= this.config.upperPrice) {
@@ -360,7 +373,6 @@ export class BotRunner {
       const result = await submitTransaction(tx, PROXY_API, getEndpoint());
       if (result.ok) {
         placed++;
-        this.totalTrades++;
         const st = result.statuses?.[0] as any;
         const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
         this.log(`✓ UPFRONT ${side} ${size.toFixed(6)} @ ${orderPrice.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
@@ -545,7 +557,6 @@ export class BotRunner {
 
         const result = await submitTransaction(tx, PROXY_API, getEndpoint());
         if (result.ok) {
-          this.totalTrades++;
           const st = result.statuses?.[0] as any;
           const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
           this.log(`✓ ${side} ${size.toFixed(6)} @ ${orderPrice.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
@@ -694,7 +705,24 @@ export class BotRunner {
     const filledSize  = Number(data.size);
     const isBuy       = Boolean(data.isBuy);
     const fee         = Number(data.fee ?? 0);
-    this.log(`Fill: ${isBuy ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)} fee=${fee.toFixed(4)}`);
+
+    // Accumulate session P&L from fills.
+    // SELL fill = earned money; BUY fill = spent money.
+    // Net = what the grid has actually made or lost this session, after fees.
+    const tradeValue = filledPrice * filledSize;
+    if (isBuy) {
+      this.sessionBuyValue += tradeValue;
+    } else {
+      this.sessionSellValue += tradeValue;
+    }
+    this.sessionFees += fee;
+    this.sessionPnl = this.sessionSellValue - this.sessionBuyValue - this.sessionFees;
+
+    this.totalTrades++;
+    this.log(
+      `Fill: ${isBuy ? "BUY" : "SELL"} ${filledSize.toFixed(6)} @ ${filledPrice.toFixed(2)} ` +
+      `fee=${fee.toFixed(4)} | Session P&L: ${this.sessionPnl >= 0 ? "+" : ""}$${this.sessionPnl.toFixed(4)}`
+    );
     this.onUpdate?.();
   }
 
