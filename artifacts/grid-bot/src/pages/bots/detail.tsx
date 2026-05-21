@@ -273,7 +273,7 @@ export default function BotDetail() {
               {bot.mode} • {bot.gridCount} Grids • ${bot.investment} • {bot.leverage}x
             </p>
             <p className="text-xs font-mono text-muted-foreground/60 mt-0.5">
-              {bot.lowerPrice} – {bot.upperPrice}
+              {bot.lowerPrice.toLocaleString("en-US")} – {bot.upperPrice.toLocaleString("en-US")}
             </p>
           </div>
 

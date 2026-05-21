@@ -176,7 +176,7 @@ function BotCard({ bot }: { bot: Bot }) {
           <div className="bg-card px-3 py-2">
             <div className="text-[10px] text-muted-foreground mb-0.5">Range</div>
             <div className="font-medium text-xs leading-tight">
-              ${bot.lowerPrice.toLocaleString()} – ${bot.upperPrice.toLocaleString()}
+              ${bot.lowerPrice.toLocaleString("en-US")} – ${bot.upperPrice.toLocaleString("en-US")}
             </div>
           </div>
           <div className="bg-card px-3 py-2">
