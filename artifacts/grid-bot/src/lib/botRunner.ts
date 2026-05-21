@@ -232,9 +232,18 @@ export class BotRunner {
    * Prevents margin drain when price bounces repeatedly across the same level —
    * each bounce would otherwise reserve fresh margin for a duplicate resting order.
    * Checks any side: BUY+SELL at the same price would be self-crossing anyway.
+   *
+   * TOLERANCE-001: Dynamic radius = min(0.1% of price, 40% of grid spacing).
+   * Mirror: HokirecehProjects getDuplicateTolerance().
+   * Rationale: fixed 2%-of-spacing fails for low-price assets where spacing is tiny
+   * (e.g. spacing $0.002 → 2% = $0.00004 radius, too tight for float rounding).
+   * The dynamic formula self-scales: on BTC ($67k, $5 spacing) → radius = min($67, $2) = $2.
+   * On low-price asset ($35, $0.002 spacing) → radius = min($0.035, $0.0008) = $0.0008.
    */
   private hasOpenOrderAt(price: number): boolean {
-    const tolerance = this.gridSpacing * 0.02; // 2% of spacing — handles float rounding
+    const priceTol   = price * 0.001;              // 0.1% of price
+    const spacingTol = this.gridSpacing * 0.4;     // 40% of grid spacing
+    const tolerance  = Math.min(priceTol, spacingTol);
     return this.openOrders.some(
       o => o.symbol === this.config.symbol && Math.abs(o.price - price) < tolerance
     );

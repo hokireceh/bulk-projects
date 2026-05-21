@@ -44,6 +44,13 @@ function parseLocaleNumber(val: unknown): number {
 }
 
 const priceField = z.preprocess(parseLocaleNumber, z.number().positive("Harus lebih dari 0"));
+const optionalPriceField = z.preprocess(
+  (v) => (v === "" || v === null || v === undefined ? undefined : parseLocaleNumber(v)),
+  z.number().positive("Harus lebih dari 0").optional()
+);
+
+// CROSS-RANGE-MIN-001: minimum 2% range width agar grid tidak terlalu sempit
+const MIN_GRID_RANGE_PCT = 2.0;
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -54,10 +61,18 @@ const formSchema = z.object({
   upperPrice: priceField,
   gridCount: z.coerce.number().int().min(2).max(200),
   investment: priceField,
-  leverage: z.coerce.number().int().min(1).max(100).default(1)
+  leverage: z.coerce.number().int().min(1).max(100).default(1),
+  stopLoss: optionalPriceField,
+  takeProfit: optionalPriceField,
 }).refine(data => data.upperPrice > data.lowerPrice, {
   message: "Upper price must be greater than lower price",
-  path: ["upperPrice"]
+  path: ["upperPrice"],
+}).refine(data => {
+  const widthPct = ((data.upperPrice - data.lowerPrice) / data.lowerPrice) * 100;
+  return widthPct >= MIN_GRID_RANGE_PCT;
+}, {
+  message: `Range grid terlalu sempit — minimum ${MIN_GRID_RANGE_PCT}% dari lower price`,
+  path: ["upperPrice"],
 });
 
 function GridRangePreview({ control }: { control: any }) {
@@ -114,7 +129,9 @@ export default function CreateBot() {
       upperPrice: 70000,
       gridCount: 10,
       investment: 1000,
-      leverage: 1
+      leverage: 1,
+      stopLoss: undefined,
+      takeProfit: undefined,
     }
   });
 
@@ -143,7 +160,9 @@ export default function CreateBot() {
     createBot.mutate({
       data: {
         ...values,
-        accountPubkey: pubkey
+        accountPubkey: pubkey,
+        stopLoss: values.stopLoss ?? null,
+        takeProfit: values.takeProfit ?? null,
       }
     }, {
       onSuccess: (bot) => {
@@ -389,6 +408,54 @@ export default function CreateBot() {
                       </FormItem>
                     )}
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-foreground/80">Stop Loss / Take Profit <span className="text-muted-foreground font-normal">(opsional)</span></p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="stopLoss"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs text-muted-foreground">
+                            Stop Loss (LONG/NETRAL: di bawah lower · SHORT: di atas upper)
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Kosongkan jika tidak dipakai"
+                              value={field.value ?? ""}
+                              onChange={field.onChange}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="takeProfit"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs text-muted-foreground">
+                            Take Profit (LONG/NETRAL: di atas upper · SHORT: di bawah lower)
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Kosongkan jika tidak dipakai"
+                              value={field.value ?? ""}
+                              onChange={field.onChange}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
 
                 <Button type="submit" className="w-full" disabled={createBot.isPending}>
