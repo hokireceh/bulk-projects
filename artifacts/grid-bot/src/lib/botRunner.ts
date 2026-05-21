@@ -478,7 +478,7 @@ export class BotRunner {
       }
 
       const tx = buildAndSign(
-        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly: false, iso: false }],
+        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly: false, iso: true }],
         this.config.accountPubkey,
         this.config.privateKey
       );
@@ -677,7 +677,7 @@ export class BotRunner {
         }
 
         const tx = buildAndSign(
-          [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly, iso: false }],
+          [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly, iso: true }],
           this.config.accountPubkey,
           this.config.privateKey
         );
@@ -942,7 +942,7 @@ export class BotRunner {
     }
 
     const tx = buildAndSign(
-      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly, iso: false }],
+      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly, iso: true }],
       this.config.accountPubkey,
       this.config.privateKey
     );
