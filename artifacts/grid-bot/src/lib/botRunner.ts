@@ -1,5 +1,5 @@
 import { sizePerGrid, snapToGridLevel } from "./gridEngine";
-import { buildAndSign, submitTransaction, cancelAllOrders, setLeverage } from "./signing";
+import { buildAndSign, submitTransaction, cancelAllOrders, setLeverage, topUpIsolatedMargin } from "./signing";
 import { getEndpoint } from "./keys";
 
 const PROXY_API = "/api";
@@ -333,6 +333,40 @@ export class BotRunner {
     return null;
   }
 
+  // ── Isolated margin helpers ──────────────────────────────────────────────────
+
+  /**
+   * Query fullAccount and return the isoPubkey for this bot's symbol, if any
+   * isolated orders or positions exist. Must be called BEFORE cancelAllOrders so
+   * that existing iso orders are still visible in the snapshot.
+   */
+  private async fetchIsolatedPubkey(): Promise<string | null> {
+    try {
+      const res = await fetch(`${PROXY_API}/account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bulk-env": getEndpoint() },
+        body: JSON.stringify({ type: "fullAccount", user: this.config.accountPubkey }),
+      });
+      if (!res.ok) return null;
+      const rows: any[] = await res.json();
+      const account = rows.find((r: any) => r.fullAccount)?.fullAccount;
+      if (!account) return null;
+      // Prefer open orders (more likely to exist at startup)
+      const isoOrder = (account.openOrders ?? []).find(
+        (o: any) => o.symbol === this.config.symbol && o.iso === true
+      );
+      if (isoOrder?.isoPubkey) return isoOrder.isoPubkey;
+      // Fall back to positions (may exist after fills)
+      const isoPos = (account.positions ?? []).find(
+        (p: any) => p.symbol === this.config.symbol && p.iso === true
+      );
+      if (isoPos?.isoPubkey) return isoPos.isoPubkey;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── Start ───────────────────────────────────────────────────────────────────
 
   async start(): Promise<void> {
@@ -367,6 +401,27 @@ export class BotRunner {
       this.log(`Mark price: $${price.toFixed(2)}`);
 
       await this.fetchMarketSpecs();
+
+      // ── Fund isolated margin account ─────────────────────────────────────
+      // Query fullAccount BEFORE cancelling so existing iso orders are visible
+      // and we can discover the isoPubkey. Transfer `investment` USDC from base
+      // to isolated account to ensure all grid orders fit within the risk limit.
+      const isoPubkey = await this.fetchIsolatedPubkey();
+      if (isoPubkey) {
+        const topUpAmount = this.config.investment;
+        this.log(`Funding isolated margin (${isoPubkey.slice(0, 8)}…) +${topUpAmount} USDC…`);
+        const transferred = await topUpIsolatedMargin({
+          privateKey: this.config.privateKey,
+          account: this.config.accountPubkey,
+          isoPubkey,
+          amount: topUpAmount,
+          endpoint: PROXY_API,
+          env: getEndpoint(),
+        });
+        this.log(transferred ? `Isolated margin funded +${topUpAmount} USDC.` : "Margin transfer returned error — continuing.");
+      } else {
+        this.log("No prior isolated exposure found — margin auto-allocated on first order.");
+      }
 
       this.log("Cancelling existing orders...");
       const cancelled = await cancelAllOrders({

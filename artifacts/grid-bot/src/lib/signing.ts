@@ -10,6 +10,7 @@ const ACTION_CODES = {
   cxa: 4,  // cancel all
   faucet: 16,
   updateUserSettings: 18,
+  transfer: 29,
 } as const;
 
 const TIF_CODES = { GTC: 0, IOC: 1, ALO: 2 } as const;
@@ -96,7 +97,16 @@ export interface UpdateUserSettingsAction {
   leverage: Record<string, number>;
 }
 
-export type BulkAction = LimitAction | CancelAllAction | FaucetAction | UpdateUserSettingsAction;
+export interface TransferAction {
+  type: "transfer";
+  from: string;         // base58 source pubkey
+  to: string;           // base58 dest pubkey (isoPubkey for isolated top-up)
+  marginSymbol: string; // e.g. "USDC"
+  amount: number;       // plain f64
+  kind?: "internal" | "external"; // default "internal"
+}
+
+export type BulkAction = LimitAction | CancelAllAction | FaucetAction | UpdateUserSettingsAction | TransferAction;
 
 // ── Wincode serialization per action ─────────────────────────────────────────
 
@@ -144,6 +154,18 @@ function encodeAction(w: WincodeWriter, action: BulkAction) {
     }
     return;
   }
+
+  if (action.type === "transfer") {
+    // Binary: discriminant 29, kind (u32: 0=internal, 1=external), from (32 bytes), to (32 bytes),
+    //         marginSymbol (str), marginAmount (plain f64)
+    w.u32le(ACTION_CODES.transfer);
+    w.u32le(action.kind === "external" ? 1 : 0);
+    w.raw(bs58.decode(action.from));
+    w.raw(bs58.decode(action.to));
+    w.str(action.marginSymbol);
+    w.f64le(action.amount); // plain f64, NOT scaled
+    return;
+  }
 }
 
 // ── Action → JSON wire format ─────────────────────────────────────────────────
@@ -174,6 +196,17 @@ function actionToJson(action: BulkAction): unknown {
   if (action.type === "updateUserSettings") {
     // JSON: { "updateUserSettings": { "m": { "BTC-USD": 5.0 } } }
     return { updateUserSettings: { m: action.leverage } };
+  }
+  if (action.type === "transfer") {
+    return {
+      transfer: {
+        k: action.kind ?? "internal",
+        from: action.from,
+        to: action.to,
+        marginSymbol: action.marginSymbol,
+        marginAmount: action.amount,
+      },
+    };
   }
   return {};
 }
@@ -314,4 +347,21 @@ export async function requestFaucet(opts: {
     opts.privateKey
   );
   return submitTransaction(tx, opts.endpoint, opts.env ?? "staging");
+}
+
+export async function topUpIsolatedMargin(opts: {
+  privateKey: string;
+  account: string;     // base account (source of funds)
+  isoPubkey: string;   // isolated account pubkey (destination)
+  amount: number;      // USDC amount to transfer
+  endpoint: string;
+  env?: string;
+}): Promise<boolean> {
+  const tx = buildAndSign(
+    [{ type: "transfer", from: opts.account, to: opts.isoPubkey, marginSymbol: "USDC", amount: opts.amount }],
+    opts.account,
+    opts.privateKey
+  );
+  const result = await submitTransaction(tx, opts.endpoint, opts.env ?? "staging");
+  return result.ok && !(result.statuses?.[0] as any)?.transferFailed;
 }
