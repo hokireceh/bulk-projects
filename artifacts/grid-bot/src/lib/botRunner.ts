@@ -74,10 +74,36 @@ export interface LiveOrder {
   timestamp: number;
 }
 
+interface MarketSpecs {
+  tickSize: number;
+  lotSize: number;
+  pricePrecision: number;
+  sizePrecision: number;
+  minNotional: number;
+}
+
+/** Parse the first status from a submitted transaction response and classify it. */
+function extractOrderResult(statuses: any[] | undefined): { oid: string; rejected: boolean; reason?: string } {
+  const st = statuses?.[0] as any;
+  if (!st) return { oid: "?", rejected: false };
+  if (st.resting)           return { oid: st.resting.oid ?? "?",           rejected: false };
+  if (st.filled)            return { oid: st.filled.oid ?? "?",            rejected: false };
+  if (st.working)           return { oid: st.working.oid ?? "?",           rejected: false };
+  if (st.rejectedInvalid)   return { oid: st.rejectedInvalid.oid ?? "?",   rejected: true, reason: `rejectedInvalid: ${st.rejectedInvalid.reason ?? "no reason"}` };
+  if (st.rejectedRiskLimit) return { oid: st.rejectedRiskLimit.oid ?? "?", rejected: true, reason: `rejectedRiskLimit: ${st.rejectedRiskLimit.reason ?? "no reason"}` };
+  if (st.rejectedCrossing)  return { oid: st.rejectedCrossing.oid ?? "?",  rejected: true, reason: "rejectedCrossing (post-only)" };
+  if (st.rejectedDuplicate) return { oid: st.rejectedDuplicate.oid ?? "?", rejected: true, reason: "rejectedDuplicate" };
+  if (st.cancelledRiskLimit) return { oid: st.cancelledRiskLimit.oid ?? "?", rejected: true, reason: `cancelledRiskLimit: ${st.cancelledRiskLimit.reason ?? "no reason"}` };
+  const key = Object.keys(st)[0] ?? "unknown";
+  const inner = st[key] as any;
+  return { oid: inner?.oid ?? "?", rejected: false };
+}
+
 export class BotRunner {
   private running = false;
   private ws: WebSocket | null = null;
   private pricePoller: ReturnType<typeof setInterval> | null = null;
+  private marketSpecs: MarketSpecs = { tickSize: 0.001, lotSize: 0.0001, pricePrecision: 3, sizePrecision: 4, minNotional: 50 };
 
   // Level-crossing state
   // Mirror: extendedBotEngine EXT-02 — persist lastLevel so bot survives page refresh
@@ -136,6 +162,44 @@ export class BotRunner {
     if (this.logs.length > 300) this.logs.shift();
     try { localStorage.setItem(this.storageKey, JSON.stringify(this.logs)); } catch { /* ignore */ }
     this.onUpdate?.();
+  }
+
+  // ── Market specs ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fetch tick/lot size for this symbol from the proxy.
+   * Falls back to safe defaults (ETH-USD values) if the call fails.
+   */
+  private async fetchMarketSpecs(): Promise<void> {
+    try {
+      const res = await fetch(`${PROXY_API}/markets`, { headers: { "x-bulk-env": getEndpoint() } });
+      if (!res.ok) return;
+      const markets = await res.json() as any[];
+      const m = markets.find((x: any) => x.symbol === this.config.symbol);
+      if (!m) return;
+      this.marketSpecs = {
+        tickSize:       m.tickSize       > 0 ? m.tickSize       : 0.001,
+        lotSize:        m.lotSize        > 0 ? m.lotSize        : 0.0001,
+        pricePrecision: m.pricePrecision > 0 ? m.pricePrecision : 3,
+        sizePrecision:  m.sizePrecision  > 0 ? m.sizePrecision  : 4,
+        minNotional:    m.minNotional    > 0 ? m.minNotional    : 50,
+      };
+      this.log(`Market specs: tickSize=${this.marketSpecs.tickSize} lotSize=${this.marketSpecs.lotSize} minNotional=${this.marketSpecs.minNotional}`);
+    } catch { /* keep defaults */ }
+  }
+
+  /** Round price to the exchange's tick size. */
+  private snapPrice(price: number): number {
+    const { tickSize, pricePrecision } = this.marketSpecs;
+    const snapped = Math.round(price / tickSize) * tickSize;
+    return parseFloat(snapped.toFixed(pricePrecision));
+  }
+
+  /** Floor size to the exchange's lot size (floor = never exceed investment). */
+  private snapSize(size: number): number {
+    const { lotSize, sizePrecision } = this.marketSpecs;
+    const snapped = Math.floor(size / lotSize) * lotSize;
+    return parseFloat(snapped.toFixed(sizePrecision));
   }
 
   // ── Grid math helpers ───────────────────────────────────────────────────────
@@ -302,6 +366,8 @@ export class BotRunner {
       this.currentPrice = price;
       this.log(`Mark price: $${price.toFixed(2)}`);
 
+      await this.fetchMarketSpecs();
+
       this.log("Cancelling existing orders...");
       const cancelled = await cancelAllOrders({
         privateKey: this.config.privateKey,
@@ -399,21 +465,37 @@ export class BotRunner {
         side = levelIdx <= currentLevel ? "BUY" : "SELL";
       }
 
+      const snappedPrice = this.snapPrice(orderPrice);
+      const snappedSize  = this.snapSize(size);
+
+      if (snappedSize <= 0) { skipped++; continue; }
+
+      const notional = snappedSize * snappedPrice;
+      if (notional < this.marketSpecs.minNotional) {
+        skipped++;
+        this.log(`Skip UPFRONT ${side} @ ${snappedPrice}: notional $${notional.toFixed(2)} < minNotional $${this.marketSpecs.minNotional}`);
+        continue;
+      }
+
       const tx = buildAndSign(
-        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly: false, iso: false }],
+        [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly: false, iso: false }],
         this.config.accountPubkey,
         this.config.privateKey
       );
 
       const result = await submitTransaction(tx, PROXY_API, getEndpoint());
       if (result.ok) {
-        placed++;
-        const st = result.statuses?.[0] as any;
-        const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
-        this.log(`✓ UPFRONT ${side} ${size.toFixed(6)} @ ${orderPrice.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
+        const { oid, rejected, reason } = extractOrderResult(result.statuses);
+        if (rejected) {
+          skipped++;
+          this.log(`✗ UPFRONT ${side} ${snappedSize} @ ${snappedPrice} — ${reason}`);
+        } else {
+          placed++;
+          this.log(`✓ UPFRONT ${side} ${snappedSize} @ ${snappedPrice} (${String(oid).slice(0, 8)}…)`);
+        }
       } else {
         skipped++;
-        this.log(`✗ UPFRONT ${side} @ ${orderPrice.toFixed(2)}: ${result.error}`);
+        this.log(`✗ UPFRONT ${side} @ ${snappedPrice}: ${result.error}`);
       }
 
       await new Promise(r => setTimeout(r, 150));
@@ -578,27 +660,38 @@ export class BotRunner {
           this.log(`Skip ${side} @ ${orderPrice.toFixed(2)}: resting order already at this level`);
           continue;
         }
-        const size = sizePerGrid(this.config.investment, this.config.gridCount, orderPrice, this.config.leverage);
+        const rawSize = sizePerGrid(this.config.investment, this.config.gridCount, orderPrice, this.config.leverage);
+        const snappedPrice = this.snapPrice(orderPrice);
+        const snappedSize  = this.snapSize(rawSize);
 
         // ── SIZE-GUARD ─────────────────────────────────────────────────────────
-        if (size <= 0) {
-          this.log(`Skip ${side} @ ${orderPrice.toFixed(2)}: size terlalu kecil (${size})`);
+        if (snappedSize <= 0) {
+          this.log(`Skip ${side} @ ${snappedPrice}: size terlalu kecil (${snappedSize})`);
+          continue;
+        }
+
+        const notional = snappedSize * snappedPrice;
+        if (notional < this.marketSpecs.minNotional) {
+          this.log(`Skip ${side} @ ${snappedPrice}: notional $${notional.toFixed(2)} < minNotional $${this.marketSpecs.minNotional}`);
           continue;
         }
 
         const tx = buildAndSign(
-          [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: orderPrice, size, tif: "GTC", reduceOnly, iso: false }],
+          [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly, iso: false }],
           this.config.accountPubkey,
           this.config.privateKey
         );
 
         const result = await submitTransaction(tx, PROXY_API, getEndpoint());
         if (result.ok) {
-          const st = result.statuses?.[0] as any;
-          const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
-          this.log(`✓ ${side} ${size.toFixed(6)} @ ${orderPrice.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
+          const { oid, rejected, reason } = extractOrderResult(result.statuses);
+          if (rejected) {
+            this.log(`✗ ${side} ${snappedSize} @ ${snappedPrice} — ${reason}`);
+          } else {
+            this.log(`✓ ${side} ${snappedSize} @ ${snappedPrice} (${String(oid).slice(0, 8)}…)`);
+          }
         } else {
-          this.log(`✗ Failed ${side} @ ${orderPrice.toFixed(2)}: ${result.error}`);
+          this.log(`✗ Failed ${side} @ ${snappedPrice}: ${result.error}`);
         }
 
         await new Promise(r => setTimeout(r, 150));
@@ -825,8 +918,17 @@ export class BotRunner {
       return;
     }
 
-    const size = sizePerGrid(this.config.investment, this.config.gridCount, price, this.config.leverage);
-    if (size <= 0) return;
+    const rawSize = sizePerGrid(this.config.investment, this.config.gridCount, price, this.config.leverage);
+    const snappedPrice = this.snapPrice(price);
+    const snappedSize  = this.snapSize(rawSize);
+
+    if (snappedSize <= 0) return;
+
+    const notional = snappedSize * snappedPrice;
+    if (notional < this.marketSpecs.minNotional) {
+      this.log(`Skip replenish ${side} @ ${snappedPrice}: notional $${notional.toFixed(2)} < minNotional $${this.marketSpecs.minNotional}`);
+      return;
+    }
 
     // GRID-REDUCEONLY-PRECHECK
     const reduceOnly = this.computeReduceOnly(side);
@@ -840,18 +942,21 @@ export class BotRunner {
     }
 
     const tx = buildAndSign(
-      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price, size, tif: "GTC", reduceOnly, iso: false }],
+      [{ type: "l", symbol: this.config.symbol, isBuy: side === "BUY", price: snappedPrice, size: snappedSize, tif: "GTC", reduceOnly, iso: false }],
       this.config.accountPubkey,
       this.config.privateKey
     );
 
     const result = await submitTransaction(tx, PROXY_API, getEndpoint());
     if (result.ok) {
-      const st = result.statuses?.[0] as any;
-      const oid = st?.resting?.oid ?? st?.filled?.oid ?? "?";
-      this.log(`✓ Replenish ${side} ${size.toFixed(6)} @ ${price.toFixed(2)} (${String(oid).slice(0, 8)}…)`);
+      const { oid, rejected, reason } = extractOrderResult(result.statuses);
+      if (rejected) {
+        this.log(`✗ Replenish ${side} ${snappedSize} @ ${snappedPrice} — ${reason}`);
+      } else {
+        this.log(`✓ Replenish ${side} ${snappedSize} @ ${snappedPrice} (${String(oid).slice(0, 8)}…)`);
+      }
     } else {
-      this.log(`✗ Replenish ${side} @ ${price.toFixed(2)}: ${result.error}`);
+      this.log(`✗ Replenish ${side} @ ${snappedPrice}: ${result.error}`);
     }
   }
 
